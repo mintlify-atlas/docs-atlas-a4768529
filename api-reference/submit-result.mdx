@@ -1,0 +1,83 @@
+---
+title: 'Submit result'
+description: 'Deliver an execution result back to the cloud using POST /v1/provider/nodes/results.'
+---
+
+## `POST /v1/provider/nodes/results`
+
+Used by provider nodes to deliver execution results back to the cloud when the WebSocket relay is unavailable. This is the counterpart to [Poll commands](/api-reference/poll-commands) — after a node receives a command via HTTP polling, it executes the capability locally and then calls this endpoint to return the result.
+
+**How the cloud handles the result:**
+- If the cloud still has an active WebSocket promise for the `requestId`, it resolves it immediately (`mode: websocket`).
+- Otherwise, the result is stored in Redis for the waiting agent to collect (`mode: redis`).
+
+<Note>
+  This endpoint requires a **provider API key**, not an agent API key.
+</Note>
+
+### Request body
+
+<ParamField body="requestId" type="string" required>
+  The `requestId` from the command payload received via [poll](/api-reference/poll-commands) or [WebSocket](/api-reference/websocket).
+</ParamField>
+
+<ParamField body="result" type="ExecutionResult" required>
+  The canonical [ExecutionResult](/api-reference/execute#response-body-executionresult) envelope produced by the adapter.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Always `success` when the result is accepted.
+</ResponseField>
+
+<ResponseField name="mode" type="string">
+  How the result was delivered:
+  - `websocket` — a waiting WebSocket promise was resolved immediately.
+  - `redis` — the result was stored in Redis for the agent to collect via long-poll.
+</ResponseField>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://oahl.onrender.com/v1/provider/nodes/results \
+  -H "Authorization: Bearer <provider_api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requestId": "cmd-3a7f92bc-1234",
+    "result": {
+      "schema_version": "1.0",
+      "operation_id": "cmd-3a7f92bc-1234",
+      "status": "success",
+      "completion": { "done": true, "state": "completed" },
+      "capability": "camera.capture",
+      "device_id": "cam-01",
+      "timestamp": "2026-03-15T12:00:05.000Z",
+      "data": {
+        "image_url": "https://storage.example.com/captures/img-001.jpg"
+      },
+      "error": null,
+      "meta": { "adapter_id": "camera-adapter-v2" }
+    }
+  }'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 — resolved via WebSocket
+{
+  "status": "success",
+  "mode": "websocket"
+}
+```
+
+```json 200 — stored in Redis
+{
+  "status": "success",
+  "mode": "redis"
+}
+```
+
+</ResponseExample>

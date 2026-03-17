@@ -1,0 +1,141 @@
+---
+title: "oahl init"
+description: "Interactive setup wizard that creates oahl-config.json for your hardware node."
+---
+
+The `init` command launches an interactive wizard that collects your node details and generates an `oahl-config.json` file in the current directory.
+
+```bash
+oahl init
+```
+
+## Authentication
+
+Before the wizard starts, `init` calls the same authentication flow used by `oahl start`. If no `.oahl-session.json` is found in the current directory, you are prompted for credentials:
+
+```
+🔐 Provider Authentication Required
+Enter your Developer Portal credentials to link this node to your account.
+
+? Email Address › you@example.com
+? 6-Digit PIN › ******
+? Remember these credentials on this machine? › Yes
+```
+
+If you cancel authentication, the wizard exits with an error and no config is written.
+
+## Wizard prompts
+
+After authentication succeeds, the wizard asks three questions:
+
+<Steps>
+  <Step title="Node ID">
+    A unique identifier for this machine. It must be distinct across all nodes registered to your account.
+
+    ```
+    ? What is the unique ID for this node? (e.g. my-laptop-01) › local-node-01
+    ```
+  </Step>
+  <Step title="Provider name">
+    A human-readable label for the hardware provider (your lab, organization, or personal setup).
+
+    ```
+    ? What is your provider name? (e.g. Accra Test Lab) › Local Lab
+    ```
+  </Step>
+  <Step title="Device type">
+    The type of hardware you are connecting first. Selecting a device type adds the appropriate adapter to `plugins` and pre-fills capabilities.
+
+    ```
+    ? What type of hardware device are you connecting first?
+    ❯ USB Camera
+      RTL-SDR Radio
+      Mock / Virtual Sensor
+      Skip for now
+    ```
+
+    | Choice | Adapter added | Capabilities pre-filled |
+    |---|---|---|
+    | USB Camera | `@oahl/adapter-usb-camera` | `camera.capture`, `camera.stream` |
+    | RTL-SDR Radio | `@oahl/adapter-rtl-sdr` | `radio.scan`, `radio.measure_power` |
+    | Mock / Virtual Sensor | *(none added)* | `sensor.read` |
+    | Skip for now | *(none added)* | *(none)* |
+
+    When you select a device type (other than Skip), the wizard also asks for a device ID and whether the device should be public.
+  </Step>
+</Steps>
+
+## Generated config
+
+The wizard writes `oahl-config.json` to the current working directory. A typical result for a USB Camera setup:
+
+```json oahl-config.json
+{
+  "node_id": "my-lab-01",
+  "cloud_url": "https://oahl.onrender.com",
+  "provider_api_key": "123456",
+  "provider": {
+    "name": "Accra Test Lab"
+  },
+  "plugins": [
+    "@oahl/adapter-mock",
+    "@oahl/adapter-usb-camera"
+  ],
+  "devices": [
+    {
+      "id": "camera-01",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "capabilities": ["camera.capture", "camera.stream"],
+      "local_path": "/dev/video0",
+      "policy": {
+        "public": false,
+        "max_session_minutes": 30
+      }
+    }
+  ]
+}
+```
+
+<Note>
+  The `@oahl/adapter-mock` plugin is always included in the initial `plugins` list as a fallback adapter.
+</Note>
+
+## After init
+
+```
+✅ Successfully generated configuration at: /your/path/oahl-config.json
+
+🚀 Next steps:
+1. Review your newly created oahl-config.json
+2. Start the local node using:
+   oahl start
+```
+
+<Steps>
+  <Step title="Review oahl-config.json">
+    Open the generated file and confirm the node ID, provider name, and device details are correct. Update `provider_api_key` with the API key from your Developer Portal.
+  </Step>
+  <Step title="Install adapter dependencies">
+    If the wizard added an adapter plugin, install it:
+
+    ```bash
+    npm install @oahl/adapter-usb-camera
+    ```
+
+    Or use the CLI shorthand:
+
+    ```bash
+    oahl install @oahl/adapter-usb-camera
+    ```
+  </Step>
+  <Step title="Start the node">
+    ```bash
+    oahl start
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  Run `oahl scan-ports` before `oahl init` to discover connected hardware and get adapter suggestions that you can paste directly into the config.
+</Tip>

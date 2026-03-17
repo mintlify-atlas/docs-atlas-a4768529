@@ -1,0 +1,490 @@
+---
+title: "Adapter development guide"
+description: "Build a custom OAHL adapter: implement the Adapter interface, scaffold with oahl create-adapter, define capabilities with JSON Schema, and publish to npm."
+keywords: ["adapter", "custom adapter", "create-adapter", "Adapter interface", "capability", "oahl-manifest", "publish"]
+---
+
+This guide walks you through building a hardware adapter for OAHL from scratch. An adapter is an npm package that implements the `Adapter` interface from `@oahl/core`. Once installed, the OAHL node loads it as a plugin and routes capability execution requests to it.
+
+## The Adapter interface
+
+Every adapter must implement this interface, exported from `@oahl/core`:
+
+```typescript
+export interface Adapter {
+  id: string;
+  initialize(): Promise<void>;
+  healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }>;
+  getDevices(): Promise<Device[]>;
+  getCapabilities(deviceId: string): Promise<Capability[]>;
+  execute(deviceId: string, capabilityName: string, args: any): Promise<any | ExecutionResult>;
+}
+```
+
+The supporting types are:
+
+```typescript
+export interface Device {
+  id: string;               // e.g. 'usb-camera-01'
+  type: string;             // 'camera', 'sensor', 'radio', 'mobile', etc.
+  name: string;             // Human-friendly display name
+  isPublic: boolean;        // Whether remote AI agents may use this device
+  manufacturer?: string;
+  model?: string;
+  serial_number?: string;
+  semantic_context?: string[];       // W3C WoT @context alignment
+  metadata?: Record<string, any>;
+  pricing?: PricingDescriptor;
+}
+
+export interface Capability {
+  name: string;             // e.g. 'camera.capture' (dot-notation, lowercase)
+  description: string;      // Detailed explanation for the AI agent
+  schema: any;              // JSON Schema for command arguments
+  instructions?: string;    // Natural language hints for AI agents (MCP style)
+  semantic_type?: string;   // e.g. 'ActionAffordance' from W3C WoT
+  helper_url?: string;
+  template?: string;
+  context?: string;
+  metadata?: Record<string, any>;
+  pricing?: PricingDescriptor;
+}
+
+export interface ExecutionResult {
+  status: 'success' | 'error';
+  error_code?: string;
+  message?: string;
+  data?: any;
+  agent_recovery_hints?: string[];  // Natural language hints to help agents recover from errors
+  [key: string]: any;
+}
+```
+
+### Method responsibilities
+
+<AccordionGroup>
+  <Accordion title="initialize()">
+    Called once when the node starts. Use this to open hardware connections, load drivers, or perform any setup that must happen before the adapter can serve requests. Throw an error here if the hardware is not available — the node will log a warning and continue without this adapter.
+  </Accordion>
+  <Accordion title="healthCheck()">
+    Called periodically by the node to confirm the adapter is still operational. Return `{ status: 'ok' }` when the hardware is reachable and `{ status: 'error', message: '...' }` when it is not. Also validate transport readiness here — a failing health check removes the device from the available pool.
+  </Accordion>
+  <Accordion title="getDevices()">
+    Return the list of physical devices this adapter manages. Each `Device` object includes an `id` that must be stable across restarts (agents and config files reference this ID). Set `isPublic: false` for hardware you want to restrict to explicit allow-lists.
+  </Accordion>
+  <Accordion title="getCapabilities(deviceId)">
+    Return the list of named actions the specified device can perform. Every capability must include a `schema` (JSON Schema) so the node can validate arguments before passing them to `execute()`. The `description` field is what the AI agent reads to understand what the capability does — write it for a non-human reader.
+  </Accordion>
+  <Accordion title="execute(deviceId, capabilityName, args)">
+    Perform the hardware action and return the result. The node has already validated `args` against the capability's schema before calling this method. Return plain JSON or an `ExecutionResult` envelope. Throw a typed error if the hardware operation fails — do not return partial data silently.
+  </Accordion>
+</AccordionGroup>
+
+## Scaffolding with oahl create-adapter
+
+The fastest way to start is the `oahl create-adapter` command. It generates a ready-to-edit package with the correct structure:
+
+```bash
+oahl create-adapter my-device
+```
+
+This creates an `adapter-my-device/` directory with the following files:
+
+```text
+adapter-my-device/
+├── src/
+│   └── index.ts          # Adapter class (edit this)
+├── package.json          # @oahl/core as peerDependency
+├── tsconfig.json
+└── README.md
+```
+
+The generated `src/index.ts` looks like this (class name is derived from the adapter name you provide):
+
+```typescript
+import { Adapter, Device, Capability } from '@oahl/core';
+
+export default class AdapterMyDeviceAdapter implements Adapter {
+  id = 'adapter-my-device';
+
+  async initialize(): Promise<void> {
+    console.log('[adapter-my-device] Initialized');
+  }
+
+  async healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }> {
+    return { status: 'ok' };
+  }
+
+  async getDevices(): Promise<Device[]> {
+    return [
+      {
+        id: 'adapter-my-device-device-01',
+        type: 'custom',
+        name: 'AdapterMyDeviceAdapter Device',
+        isPublic: false
+      }
+    ];
+  }
+
+  async getCapabilities(deviceId: string): Promise<Capability[]> {
+    if (deviceId !== 'adapter-my-device-device-01') {
+      throw new Error('Device not found');
+    }
+
+    return [
+      {
+        name: 'custom.ping',
+        description: 'Smoke-test capability for this adapter',
+        schema: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' }
+          }
+        }
+      }
+    ];
+  }
+
+  async execute(deviceId: string, capabilityName: string, args: any): Promise<any> {
+    if (deviceId !== 'adapter-my-device-device-01') {
+      throw new Error('Device not found');
+    }
+
+    if (capabilityName === 'custom.ping') {
+      return {
+        ok: true,
+        adapter: this.id,
+        message: args?.message || 'pong',
+        timestamp: Date.now()
+      };
+    }
+
+    throw new Error('Capability not supported');
+  }
+}
+```
+
+The generated `package.json`:
+
+```json
+{
+  "name": "@oahl/adapter-my-device",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "peerDependencies": {
+    "@oahl/core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.10.0"
+  }
+}
+```
+
+## Step-by-step: building a real adapter
+
+The following example builds an adapter for a vibrating device controlled over a custom protocol. Use it as a template for any hardware.
+
+<Steps>
+  <Step title="Scaffold or initialise the package">
+    Use the CLI scaffold (recommended) or initialise manually:
+
+    <Tabs>
+      <Tab title="CLI scaffold">
+        ```bash
+        oahl create-adapter vibrator
+        cd adapter-vibrator
+        npm install
+        ```
+      </Tab>
+      <Tab title="Manual">
+        ```bash
+        mkdir oahl-adapter-vibrator && cd oahl-adapter-vibrator
+        npm init -y
+        npm install @oahl/core
+        npm install --save-dev typescript @types/node
+        mkdir src
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Define your devices in getDevices()">
+    Return the hardware this adapter manages. Each device needs a stable `id` and an appropriate `type`:
+
+    ```typescript
+    async getDevices(): Promise<Device[]> {
+      return [{
+        id: 'vibrator-01',
+        type: 'mobile',
+        name: 'Personal Phone',
+        isPublic: true
+      }];
+    }
+    ```
+  </Step>
+
+  <Step title="Define capabilities with JSON Schema">
+    Return at least one capability per device. The `schema` field tells the node and agents exactly what arguments to pass. Use [JSON Schema](https://json-schema.org/) to define property types, required fields, and constraints:
+
+    ```typescript
+    async getCapabilities(deviceId: string): Promise<Capability[]> {
+      return [{
+        name: 'phone.vibrate',
+        description: 'Trigger a physical vibration on the phone',
+        schema: {
+          type: 'object',
+          properties: {
+            duration_ms: {
+              type: 'number',
+              description: 'Duration in milliseconds'
+            }
+          }
+        }
+      }];
+    }
+    ```
+
+    <Tip>
+      Use lowercase dot-notation for capability names: `<domain>.<action>` (e.g. `camera.capture`, `sensor.read`, `phone.vibrate`). Keep domains stable across adapter versions.
+    </Tip>
+  </Step>
+
+  <Step title="Implement execute()">
+    Route each capability to its hardware call. Return structured JSON. Throw a typed `Error` for failures — never swallow exceptions silently:
+
+    ```typescript
+    async execute(deviceId: string, capabilityName: string, args: any) {
+      if (capabilityName === 'phone.vibrate') {
+        // Replace with your real hardware driver call (ADB, serial, BLE, etc.)
+        console.log(`[Vibrator] Vibrating for ${args.duration_ms}ms...`);
+        return { success: true, timestamp: Date.now() };
+      }
+      throw new Error(`Capability ${capabilityName} not supported.`);
+    }
+    ```
+  </Step>
+
+  <Step title="Add a hardware.baseline fallback (optional)">
+    If your hardware has many possible actions or you want agents to describe intent freely, add a `hardware.baseline` capability. The mock, USB camera, and RTL-SDR adapters all use this pattern:
+
+    ```typescript
+    async getCapabilities(deviceId: string): Promise<Capability[]> {
+      return [
+        // ... your primary capabilities ...
+        {
+          name: 'hardware.baseline',
+          description: 'Fallback for actions without a dedicated capability',
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              intent: { type: 'string' },
+              params: { type: 'object' },
+              expected_output: { type: 'object' },
+              timeout_ms: { type: 'number', minimum: 1 }
+            },
+            required: ['intent']
+          },
+          helper_url: 'https://your-docs-or-helper-endpoint',
+          template: 'Describe action + safety bounds + expected output contract.'
+        }
+      ];
+    }
+
+    async execute(deviceId: string, capabilityName: string, args: any) {
+      if (capabilityName === 'hardware.baseline') {
+        const intent = String(args?.intent || '').toLowerCase();
+
+        if (intent.includes('vibrate')) {
+          return await this.execute(deviceId, 'phone.vibrate', args?.params || {});
+        }
+
+        return {
+          baseline: true,
+          handled: false,
+          message: 'Intent not mapped yet in this adapter',
+          intent: args?.intent || '',
+          params: args?.params || {}
+        };
+      }
+      // ... normal capability handling
+    }
+    ```
+  </Step>
+
+  <Step title="Build and register the adapter">
+    Build the TypeScript source:
+
+    ```bash
+    npm run build
+    ```
+
+    Install the adapter into your node workspace and register it:
+
+    ```bash
+    oahl install @oahl/adapter-vibrator
+    ```
+
+    Or, during local development, install by path:
+
+    ```bash
+    npm install ./adapter-vibrator
+    ```
+
+    Then add it to `oahl-config.json` manually:
+
+    ```json
+    {
+      "plugins": ["@oahl/adapter-mock", "@oahl/adapter-vibrator"]
+    }
+    ```
+  </Step>
+
+  <Step title="Test the adapter">
+    Start the node and confirm the device and capabilities appear:
+
+    ```bash
+    oahl start
+    ```
+
+    ```bash
+    curl http://localhost:3000/devices
+    curl http://localhost:3000/devices/vibrator-01/capabilities
+    ```
+
+    Run OAHL conformance checks against your adapter:
+
+    ```bash
+    oahl conformance @oahl/adapter-vibrator
+    ```
+  </Step>
+</Steps>
+
+## Defining capabilities with JSON Schema
+
+The `schema` field in each `Capability` is a JSON Schema object. The node validates `args` against it before calling `execute()`. Keep schemas precise so agents know exactly what to pass.
+
+<CodeGroup>
+
+```json Required fields
+{
+  "type": "object",
+  "properties": {
+    "frequencyHz": { "type": "number" }
+  },
+  "required": ["frequencyHz"]
+}
+```
+
+```json Enum constraint
+{
+  "type": "object",
+  "properties": {
+    "resolution": {
+      "type": "string",
+      "enum": ["1080p", "720p"]
+    }
+  }
+}
+```
+
+```json Nested object
+{
+  "type": "object",
+  "properties": {
+    "target_pose": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "z": { "type": "number" }
+      },
+      "required": ["x", "y", "z"]
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+## Execution result envelope
+
+For reliable agent behaviour, return results using the OAHL execution envelope schema (`oahl-execution-result.schema.json`, `schema_version: "1.0"`):
+
+```json
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-123",
+  "status": "success",
+  "completion": { "done": true, "state": "completed" },
+  "capability": "phone.vibrate",
+  "device_id": "vibrator-01",
+  "timestamp": "2026-03-17T10:00:00.000Z",
+  "data": {}
+}
+```
+
+For failures:
+
+```json
+{
+  "status": "error",
+  "completion": { "done": true, "state": "failed" },
+  "error": {
+    "code": "DEVICE_UNAVAILABLE",
+    "message": "Hardware not responding",
+    "retryable": true
+  }
+}
+```
+
+## Capability naming conventions
+
+- Use lowercase dot-notation: `<domain>.<action>` (e.g. `camera.capture`)
+- Keep domains stable (`camera`, `radio`, `sensor`, `phone`, `robot`, `lab`)
+- Use explicit verbs: `capture`, `stream`, `tune`, `scan`, `read`, `write`, `start`, `stop`
+- Version only when needed via suffix: `camera.capture.v2`
+
+## Publishing to npm with oahl-manifest.json
+
+To be listed on the [OAHL Marketplace](https://oahl.org/marketplace), include an `oahl-manifest.json` in the package root before publishing:
+
+```json
+{
+  "name": "My Vibrator Adapter",
+  "description": "Controls phone vibration via custom protocol.",
+  "hardware_tags": ["mobile", "vibration"],
+  "capabilities": ["phone.vibrate"]
+}
+```
+
+The full registry schema (`registry/schemas/adapter.schema.json`) also requires `id`, `author`, `repository`, and `license` when submitting to the official registry:
+
+```json
+{
+  "id": "oahl-adapter-vibrator",
+  "name": "My Vibrator Adapter",
+  "description": "Controls phone vibration via custom protocol.",
+  "author": "your-github-username",
+  "repository": "https://github.com/your-org/oahl-adapter-vibrator",
+  "npm_package": "@oahl/adapter-vibrator",
+  "hardware_tags": ["mobile", "vibration"],
+  "capabilities": ["phone.vibrate"],
+  "license": "MIT"
+}
+```
+
+Publish to npm, then open a pull request to add your package name to `registry/adapters.txt` in the [OAHL repository](https://github.com/fredabila/oahl/tree/main/registry). The registry crawler handles the rest.
+
+## Best practices
+
+- **Write descriptions for agents, not humans.** The `description` field in `getCapabilities` is how an AI agent learns what your hardware does. Be explicit about inputs, outputs, and side effects.
+- **Return errors, never swallow them.** If the hardware is disconnected or busy, throw a typed `Error` so the node can return a structured error to the agent.
+- **Use simple return formats.** Return data as plain JSON objects (e.g. `{ "temp": 24 }`). For images, use a URL or Base64 string.
+- **Transport separation.** If your adapter uses ADB, serial, BLE, or MQTT, implement a dedicated `TransportProvider` class rather than embedding connection logic in `execute()`. See the [transport plugin architecture guide](/adapters/transport-plugin-architecture).

@@ -1,0 +1,404 @@
+---
+title: "Configuration reference"
+description: "Complete reference for oahl-config.json — every top-level field and device property."
+keywords: ["configuration", "oahl-config.json", "devices", "plugins", "access policy", "policy"]
+---
+
+The `oahl-config.json` file is the single source of truth for your OAHL node. It tells the node its identity, which adapters to load, and what devices to expose — including safety limits for every device.
+
+## Full example
+
+The following is a complete working example showing all major configuration options:
+
+```json oahl-config.json
+{
+  "node_id": "my-laptop-01",
+  "cloud_url": "https://oahl.onrender.com",
+  "provider_api_key": "123456",
+  "provider": {
+    "name": "My Personal Test Node"
+  },
+  "plugins": [
+    "@oahl/adapter-mock",
+    "@oahl/adapter-usb-camera",
+    "@oahl/adapter-rtl-sdr",
+    "@oahl/adapter-android",
+    "@oahl/adapter-arduino"
+  ],
+  "baseline_capability": {
+    "enabled": true,
+    "name": "hardware.baseline",
+    "helper_url": "https://example.com/hardware-helper",
+    "template": "Describe action, safety limits, and expected result when direct capability is missing."
+  },
+  "server": {
+    "port": 3000,
+    "host": "0.0.0.0"
+  },
+  "devices": [
+    {
+      "id": "usb-cam-1",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "capabilities": ["capture_image", "hardware.baseline"],
+      "policy": {
+        "public": false,
+        "max_session_minutes": 30
+      }
+    },
+    {
+      "id": "mock-device-1",
+      "type": "mock",
+      "adapter": "mock-adapter",
+      "capabilities": ["ping", "hardware.baseline"],
+      "policy": {
+        "public": true,
+        "max_session_minutes": 30
+      }
+    },
+    {
+      "id": "rtl-sdr-1",
+      "type": "sdr",
+      "adapter": "rtl-sdr-adapter",
+      "capabilities": ["tune", "read_samples", "hardware.baseline"],
+      "policy": {
+        "public": false,
+        "max_session_minutes": 30
+      }
+    },
+    {
+      "id": "adb-085552528H003259-83cftS._adb-tls-connect._tcp",
+      "type": "android",
+      "adapter": "@oahl/adapter-android",
+      "capabilities": [
+        "screen.screenshot",
+        "screen.record",
+        "input.tap",
+        "system.info"
+      ],
+      "access_policy": {
+        "visibility": "public",
+        "allowed_agents": [],
+        "allowed_orgs": [],
+        "denied_agents": []
+      },
+      "policy": {
+        "public": true,
+        "max_session_minutes": 30
+      }
+    }
+  ]
+}
+```
+
+## Top-level fields
+
+<ParamField path="node_id" type="string" required>
+  A unique identifier for this node. Used when registering with the Cloud Registry and in session logs. Choose a stable, descriptive name such as `my-laptop-01` or `lab-rack-a`.
+</ParamField>
+
+<ParamField path="cloud_url" type="string" default="https://oahl.onrender.com">
+  The URL of the OAHL Cloud Registry. When set, the node sends a heartbeat to this URL and registers its capabilities so remote agents can discover them.
+
+  Set to an empty string to run the node in offline (local-only) mode:
+
+  ```json
+  "cloud_url": ""
+  ```
+</ParamField>
+
+<ParamField path="provider_api_key" type="string">
+  Your API key from the OAHL Developer Portal. Required for the node to authenticate with the Cloud Registry. Treat this value like a password — do not commit it to version control.
+</ParamField>
+
+<ParamField path="provider" type="object">
+  Metadata about the node operator. Displayed in the Cloud Registry to help agents identify the source of hardware.
+
+  <Expandable title="properties">
+    <ParamField path="provider.name" type="string">
+      Human-readable name for this provider, e.g. `Accra Test Lab`.
+    </ParamField>
+    <ParamField path="provider.owner_id" type="string">
+      Optional identifier linking this provider record to a Developer Portal account.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="plugins" type="string[]">
+  List of adapter package names to load when the node starts. Each string must be an npm package name that exports a valid OAHL adapter class.
+
+  ```json
+  "plugins": [
+    "@oahl/adapter-mock",
+    "@oahl/adapter-usb-camera",
+    "@oahl/adapter-rtl-sdr",
+    "@oahl/adapter-android",
+    "@oahl/adapter-arduino"
+  ]
+  ```
+
+  Use `oahl install <package>` to add a plugin and have it automatically appended to this list.
+</ParamField>
+
+<ParamField path="baseline_capability" type="object">
+  Node-level fallback capability configuration. When an agent requests an action that no explicit capability covers, the node can use this template to guide the agent on what to do.
+
+  <Expandable title="properties">
+    <ParamField path="baseline_capability.enabled" type="boolean" default="true">
+      Whether the baseline capability is active on this node.
+    </ParamField>
+    <ParamField path="baseline_capability.name" type="string" default="hardware.baseline">
+      The capability name advertised for the fallback handler.
+    </ParamField>
+    <ParamField path="baseline_capability.helper_url" type="string">
+      URL to a document describing how to interact with this hardware when a direct capability is unavailable.
+    </ParamField>
+    <ParamField path="baseline_capability.template" type="string">
+      Prompt template or guidance string passed to the agent when no direct capability matches.
+    </ParamField>
+    <ParamField path="baseline_capability.context" type="string">
+      Additional context to include with the fallback response.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="server" type="object">
+  HTTP server settings for the local node.
+
+  <Expandable title="properties">
+    <ParamField path="server.port" type="number" default="3000">
+      Port the node listens on. Override with the `PORT` environment variable or the `--port` flag on `oahl start`.
+    </ParamField>
+    <ParamField path="server.host" type="string" default="0.0.0.0">
+      Network interface to bind to. Use `127.0.0.1` to restrict access to localhost only.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="devices" type="object[]">
+  Array of device definitions. Each entry declares a hardware device, the adapter that drives it, the capabilities it supports, and the safety policies that govern its use.
+</ParamField>
+
+## Device fields
+
+Each object in the `devices` array supports the following fields.
+
+<ParamField path="id" type="string" required>
+  Unique identifier for the device within this node. Used in session requests and capability queries. For ADB devices, use the device ID shown by `adb devices`.
+
+  ```json
+  "id": "usb-cam-1"
+  ```
+</ParamField>
+
+<ParamField path="type" type="string">
+  Category of the device. Informational — used by the Cloud Registry to filter devices by type. Common values: `camera`, `sdr`, `android`, `mock`, `serial-device`, `custom`.
+</ParamField>
+
+<ParamField path="adapter" type="string">
+  The adapter plugin that handles this device. Must match one of the entries in the top-level `plugins` array (or a short alias registered by that plugin).
+
+  ```json
+  "adapter": "usb-camera"
+  ```
+</ParamField>
+
+<ParamField path="capabilities" type="string[]">
+  List of capability names this device advertises. Only capabilities listed here can be executed against this device. See the adapter's documentation for the full list of available capability names.
+
+  ```json
+  "capabilities": ["camera.capture", "camera.stream", "hardware.baseline"]
+  ```
+</ParamField>
+
+<ParamField path="owner_id" type="string">
+  Optional identifier linking ownership of this device to a Developer Portal account. Used for billing and attribution.
+</ParamField>
+
+<ParamField path="manufacturer" type="string">
+  Device manufacturer name. Informational metadata displayed in the Cloud Registry.
+</ParamField>
+
+<ParamField path="model" type="string">
+  Device model name. Informational metadata displayed in the Cloud Registry.
+</ParamField>
+
+<ParamField path="serial_number" type="string">
+  Hardware serial number. Informational metadata.
+</ParamField>
+
+<ParamField path="semantic_context" type="string[]">
+  Free-form tags describing the device's physical context or location. Agents can use these to discover devices by semantic meaning.
+
+  ```json
+  "semantic_context": ["indoor", "lab", "facing-window"]
+  ```
+</ParamField>
+
+<ParamField path="pricing" type="object">
+  Optional pricing configuration for metered access to this device.
+
+  <Expandable title="properties">
+    <ParamField path="pricing.currency" type="string" required>
+      ISO 4217 currency code, e.g. `USD`.
+    </ParamField>
+    <ParamField path="pricing.rate_per_minute" type="number">
+      Cost per minute of session time.
+    </ParamField>
+    <ParamField path="pricing.rate_per_execution" type="number">
+      Cost per individual capability execution.
+    </ParamField>
+    <ParamField path="pricing.payment_address" type="string">
+      Payment destination (e.g. a wallet address) for automated settlement.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Policy
+
+The `policy` object defines session-level limits on device usage.
+
+<ParamField path="policy.max_session_minutes" type="number">
+  Maximum duration in minutes for a single session on this device. The node terminates sessions that exceed this limit. Default: `30`.
+</ParamField>
+
+<ParamField path="policy.public" type="boolean">
+  When `true`, any agent can request a session without being on an allow-list. When `false`, access is restricted to agents and organisations listed in `access_policy`.
+</ParamField>
+
+### Access policy
+
+The `access_policy` object provides fine-grained control over which agents and organisations can use a device.
+
+<ParamField path="access_policy.visibility" type="string" default="private">
+  Controls who can discover and request this device:
+
+  - `"public"` — any agent can use it
+  - `"shared"` — only agents on the `allowed_agents` or `allowed_orgs` list
+  - `"private"` — only the device owner and explicitly listed agents
+</ParamField>
+
+<ParamField path="access_policy.allowed_agents" type="string[]">
+  List of agent IDs explicitly permitted to use this device, regardless of visibility setting.
+
+  ```json
+  "allowed_agents": ["agent-abc123", "agent-def456"]
+  ```
+</ParamField>
+
+<ParamField path="access_policy.allowed_orgs" type="string[]">
+  List of organisation IDs whose agents are permitted to use this device.
+
+  ```json
+  "allowed_orgs": ["org-acme"]
+  ```
+</ParamField>
+
+<ParamField path="access_policy.denied_agents" type="string[]">
+  List of agent IDs that are always denied access, even if they would otherwise qualify through `allowed_agents` or `allowed_orgs`.
+
+  ```json
+  "denied_agents": ["agent-untrusted"]
+  ```
+</ParamField>
+
+## Device config examples
+
+<Tabs>
+  <Tab title="USB camera">
+    ```json
+    {
+      "id": "usb-cam-1",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "local_path": "/dev/video0",
+      "capabilities": [
+        "camera.capture",
+        "camera.stream",
+        "hardware.baseline"
+      ],
+      "policy": {
+        "public": false,
+        "max_session_minutes": 20
+      },
+      "access_policy": {
+        "visibility": "shared",
+        "allowed_agents": ["agent-abc123"],
+        "allowed_orgs": [],
+        "denied_agents": []
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="RTL-SDR">
+    ```json
+    {
+      "id": "rtl-sdr-1",
+      "type": "sdr",
+      "adapter": "rtl-sdr-adapter",
+      "usb_index": 0,
+      "capabilities": [
+        "tune",
+        "read_samples",
+        "hardware.baseline"
+      ],
+      "policy": {
+        "public": false,
+        "max_session_minutes": 30,
+        "transmit_enabled": false,
+        "allowed_frequency_ranges": [
+          { "start_hz": 88000000, "end_hz": 108000000 }
+        ]
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Android (ADB)">
+    ```json
+    {
+      "id": "adb-085552528H003259-83cftS._adb-tls-connect._tcp",
+      "type": "android",
+      "adapter": "@oahl/adapter-android",
+      "capabilities": [
+        "screen.screenshot",
+        "screen.record",
+        "input.tap",
+        "input.swipe",
+        "input.text",
+        "input.keyevent",
+        "camera.photo",
+        "camera.video",
+        "system.info",
+        "system.shell"
+      ],
+      "access_policy": {
+        "visibility": "public",
+        "allowed_agents": [],
+        "allowed_orgs": [],
+        "denied_agents": []
+      },
+      "policy": {
+        "public": true,
+        "max_session_minutes": 30
+      }
+    }
+    ```
+  </Tab>
+  <Tab title="Mock / virtual">
+    ```json
+    {
+      "id": "mock-device-1",
+      "type": "mock",
+      "adapter": "mock-adapter",
+      "capabilities": [
+        "ping",
+        "hardware.baseline"
+      ],
+      "policy": {
+        "public": true,
+        "max_session_minutes": 30
+      }
+    }
+    ```
+  </Tab>
+</Tabs>

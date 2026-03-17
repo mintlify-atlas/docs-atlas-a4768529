@@ -1,0 +1,106 @@
+---
+title: 'Poll commands'
+description: 'Long-poll for pending commands from the cloud using GET /v1/provider/nodes/{id}/poll.'
+---
+
+## `GET /v1/provider/nodes/{id}/poll`
+
+Blocks up to **30 seconds** waiting for a queued command. Returns `200` with the command payload if a command arrives during the wait, or `204 No Content` if the timeout elapses with no command.
+
+This endpoint is the **HTTP fallback** for nodes that cannot maintain a persistent WebSocket connection. Prefer the [WebSocket relay](/api-reference/websocket) (`/ws/provider`) for lower latency.
+
+<Note>
+  This endpoint requires a **provider API key**, not an agent API key.
+</Note>
+
+### Path parameters
+
+<ParamField path="id" type="string" required>
+  The `node_id` that was registered with `POST /v1/provider/nodes/register`.
+</ParamField>
+
+### Response — `200 OK`
+
+A command is waiting.
+
+<ResponseField name="type" type="string">
+  The command type: `command` for a single execution request, or `command-batch` for a batch.
+</ResponseField>
+
+<ResponseField name="payload" type="object">
+  The command payload. Shape depends on `type`.
+  <Expandable title="command payload">
+    <ResponseField name="requestId" type="string">
+      Unique request ID. Pass this back in `POST /v1/provider/nodes/results` or the WebSocket result message.
+    </ResponseField>
+    <ResponseField name="deviceId" type="string">
+      ID of the device to execute on.
+    </ResponseField>
+    <ResponseField name="capability" type="string">
+      Capability to execute (present for `command` type).
+    </ResponseField>
+    <ResponseField name="commands" type="object[]">
+      Array of `{ capability, params }` objects (present for `command-batch` type).
+    </ResponseField>
+    <ResponseField name="params" type="object">
+      Parameters for the capability (present for `command` type).
+    </ResponseField>
+    <ResponseField name="dispatchedAt" type="string">
+      ISO 8601 datetime of when the cloud dispatched the command.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Response — `204 No Content`
+
+The 30-second poll window elapsed with no pending command. The node should immediately issue another `GET` request to keep listening.
+
+### When to use polling vs WebSocket
+
+| Scenario | Recommendation |
+|---|---|
+| Node has a stable network connection | Use [WebSocket](/api-reference/websocket) |
+| Node is behind a restrictive firewall or proxy | Use HTTP polling |
+| Node is in a serverless or short-lived environment | Use HTTP polling |
+| Lowest possible latency is required | Use [WebSocket](/api-reference/websocket) |
+
+<RequestExample>
+
+```bash cURL
+curl https://oahl.onrender.com/v1/provider/nodes/node-abc/poll \
+  -H "Authorization: Bearer <provider_api_key>"
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200 — single command
+{
+  "type": "command",
+  "payload": {
+    "requestId": "cmd-3a7f92bc-1234",
+    "deviceId": "cam-01",
+    "capability": "camera.capture",
+    "params": { "resolution": "1080p" },
+    "dispatchedAt": "2026-03-15T12:00:00.000Z"
+  }
+}
+```
+
+```json 200 — batch command
+{
+  "type": "command-batch",
+  "payload": {
+    "requestId": "cmd-batch-7c3e2a1d-9012",
+    "deviceId": "arm-01",
+    "commands": [
+      { "capability": "arm.move", "params": { "x": 10, "y": 0, "z": 5 } },
+      { "capability": "arm.close_gripper", "params": {} }
+    ],
+    "dispatchedAt": "2026-03-15T12:05:00.000Z"
+  }
+}
+```
+
+</ResponseExample>

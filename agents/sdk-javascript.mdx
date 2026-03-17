@@ -1,0 +1,453 @@
+---
+title: "JavaScript SDK"
+description: "API reference for @oahl/sdk — the official JavaScript and TypeScript client for local OAHL nodes and the cloud relay."
+keywords: ["javascript", "typescript", "sdk", "OahlClient", "CloudClient", "npm"]
+---
+
+The `@oahl/sdk` package provides typed clients for both local OAHL nodes and the OAHL Cloud relay. It is written in TypeScript and works in Node.js and browser environments.
+
+## Installation
+
+```bash
+npm install @oahl/sdk
+```
+
+Requires Node.js 18 or later. The package ships with TypeScript declaration files — no separate `@types` package is needed.
+
+---
+
+## `OahlClient`
+
+Use `OahlClient` to interact with a local or self-hosted OAHL node over HTTP.
+
+### Constructor
+
+```typescript
+new OahlClient(baseUrl?: string)
+```
+
+<ParamField path="baseUrl" type="string" default="http://localhost:3000">
+  Base URL of the local OAHL node. Trailing slashes are ignored.
+</ParamField>
+
+```typescript
+import { OahlClient } from '@oahl/sdk';
+
+const client = new OahlClient('http://localhost:3000');
+```
+
+### Methods
+
+#### `health()`
+
+Checks whether the node is running and responsive.
+
+```typescript
+async health(): Promise<any>
+```
+
+```typescript
+const status = await client.health();
+// { status: 'ok' }
+```
+
+#### `getDevices()`
+
+Lists all devices registered on this node.
+
+```typescript
+async getDevices(): Promise<Device[]>
+```
+
+<ResponseField name="Device[]" type="array">
+  Array of `Device` objects from `@oahl/core`.
+</ResponseField>
+
+```typescript
+const devices = await client.getDevices();
+console.log(devices[0].id); // e.g. "usb-cam-1"
+```
+
+#### `getCapabilities(deviceId)`
+
+Returns the capabilities registered for a specific device.
+
+```typescript
+async getCapabilities(deviceId: string): Promise<Capability[]>
+```
+
+<ParamField path="deviceId" type="string" required>
+  The ID of the device to query.
+</ParamField>
+
+```typescript
+const caps = await client.getCapabilities('usb-cam-1');
+console.log(caps.map(c => c.name)); // ['camera.capture', 'camera.stream']
+```
+
+#### `startSession(deviceId)`
+
+Reserves a device and opens an exclusive session.
+
+```typescript
+async startSession(deviceId: string): Promise<Session>
+```
+
+<ParamField path="deviceId" type="string" required>
+  The ID of the device to reserve.
+</ParamField>
+
+<ResponseField name="Session" type="object">
+  A `Session` object containing at minimum an `id` field used in subsequent calls.
+</ResponseField>
+
+```typescript
+const session = await client.startSession('usb-cam-1');
+console.log(session.id); // e.g. "sess-abc123"
+```
+
+#### `execute(sessionId, capabilityName, args?)`
+
+Executes a named capability within an active session.
+
+```typescript
+async execute(sessionId: string, capabilityName: string, args?: any): Promise<any>
+```
+
+<ParamField path="sessionId" type="string" required>
+  The session ID returned by `startSession`.
+</ParamField>
+<ParamField path="capabilityName" type="string" required>
+  The dot-notation capability name (e.g. `camera.capture`).
+</ParamField>
+<ParamField path="args" type="object">
+  Optional parameters to pass to the capability.
+</ParamField>
+
+```typescript
+const result = await client.execute(session.id, 'camera.capture', {
+  resolution: '1080p',
+  format: 'jpg'
+});
+```
+
+#### `stopSession(sessionId)`
+
+Releases the device and closes the session.
+
+```typescript
+async stopSession(sessionId: string): Promise<void>
+```
+
+<ParamField path="sessionId" type="string" required>
+  The session ID to stop.
+</ParamField>
+
+```typescript
+await client.stopSession(session.id);
+```
+
+#### `getSession(sessionId)`
+
+Returns the current status and metadata for a session.
+
+```typescript
+async getSession(sessionId: string): Promise<Session>
+```
+
+<ParamField path="sessionId" type="string" required>
+  The session ID to look up.
+</ParamField>
+
+```typescript
+const session = await client.getSession('sess-abc123');
+console.log(session.status); // 'active'
+```
+
+---
+
+## `CloudClient`
+
+Use `CloudClient` to discover hardware and execute capabilities via the OAHL Cloud relay. Authentication is required for all cloud requests.
+
+### Constructor
+
+```typescript
+new CloudClient(baseUrl?: string, agentApiKey?: string)
+```
+
+<ParamField path="baseUrl" type="string" default="https://oahl.onrender.com">
+  Base URL of the OAHL Cloud relay. Trailing slashes are stripped automatically.
+</ParamField>
+<ParamField path="agentApiKey" type="string">
+  Bearer token used to authenticate requests. Can also be set later with `setAgentApiKey`.
+</ParamField>
+
+```typescript
+import { CloudClient } from '@oahl/sdk';
+
+const cloud = new CloudClient(
+  'https://oahl.onrender.com',
+  process.env.OAHL_AGENT_API_KEY
+);
+```
+
+### Methods
+
+#### `setAgentApiKey(key)`
+
+Updates the API key used for authentication. Useful when rotating credentials without constructing a new client.
+
+```typescript
+setAgentApiKey(agentApiKey: string): void
+```
+
+<ParamField path="agentApiKey" type="string" required>
+  The new API key to use for all subsequent requests.
+</ParamField>
+
+#### `getCapabilities(query?)`
+
+Searches the Cloud relay for devices and capabilities matching the given filters.
+
+```typescript
+async getCapabilities(query?: CloudCapabilitiesQuery): Promise<CloudCapabilitiesResponse>
+```
+
+<ParamField path="query" type="CloudCapabilitiesQuery">
+  Optional filter and pagination options.
+
+  <Expandable title="CloudCapabilitiesQuery fields">
+    <ParamField path="q" type="string">
+      Free-text search across device names and capability descriptions.
+    </ParamField>
+    <ParamField path="type" type="string">
+      Filter by device type (e.g. `camera`, `sdr`, `mobile`).
+    </ParamField>
+    <ParamField path="provider" type="string">
+      Filter by provider ID.
+    </ParamField>
+    <ParamField path="node_id" type="string">
+      Filter by a specific node ID.
+    </ParamField>
+    <ParamField path="capability" type="string">
+      Filter by capability name (e.g. `camera.capture`).
+    </ParamField>
+    <ParamField path="page" type="number">
+      Page number for paginated results (1-indexed).
+    </ParamField>
+    <ParamField path="page_size" type="number">
+      Number of results per page.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+```typescript
+const response = await cloud.getCapabilities({
+  capability: 'camera.capture',
+  type: 'camera',
+  page: 1,
+  page_size: 25
+});
+
+console.log(response.devices.length);
+console.log(response.pagination?.total);
+```
+
+#### `requestSession(input)`
+
+Reserves a device or capability via the Cloud relay and returns a session ID.
+
+```typescript
+async requestSession(input: CloudRequestSessionInput): Promise<CloudSessionRequestResponse>
+```
+
+<ParamField path="input" type="CloudRequestSessionInput">
+  Session request parameters.
+
+  <Expandable title="CloudRequestSessionInput fields">
+    <ParamField path="capability" type="string">
+      The capability to reserve (e.g. `camera.capture`). Used for capability-based routing when `device_id` is not specified.
+    </ParamField>
+    <ParamField path="device_id" type="string">
+      Target a specific device by ID for deterministic routing.
+    </ParamField>
+    <ParamField path="node_id" type="string">
+      Target a specific node by ID.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+```typescript
+const { session_id, status } = await cloud.requestSession({
+  capability: 'camera.capture',
+  device_id: response.devices[0].id
+});
+```
+
+#### `execute(sessionId, input)`
+
+Executes a capability on an active cloud session. Returns the result synchronously.
+
+```typescript
+async execute(sessionId: string, input: CloudExecuteInput): Promise<any>
+```
+
+<ParamField path="sessionId" type="string" required>
+  The session ID returned by `requestSession`.
+</ParamField>
+<ParamField path="input" type="CloudExecuteInput">
+  Execution parameters.
+
+  <Expandable title="CloudExecuteInput fields">
+    <ParamField path="capability" type="string" required>
+      The capability to execute.
+    </ParamField>
+    <ParamField path="params" type="object">
+      Capability-specific parameters passed to the adapter.
+    </ParamField>
+    <ParamField path="timeout_ms" type="number">
+      Maximum time in milliseconds to wait for the capability to complete.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+```typescript
+const result = await cloud.execute(session_id, {
+  capability: 'camera.capture',
+  params: { resolution: '1080p' },
+  timeout_ms: 60000
+});
+```
+
+#### `stopSession(sessionId)`
+
+Stops a cloud session and releases the associated device.
+
+```typescript
+async stopSession(sessionId: string): Promise<CloudStopSessionResponse>
+```
+
+<ParamField path="sessionId" type="string" required>
+  The session ID to stop.
+</ParamField>
+
+```typescript
+await cloud.stopSession(session_id);
+```
+
+---
+
+## TypeScript interfaces
+
+All interfaces are exported from `@oahl/sdk` and can be imported directly.
+
+```typescript
+import type {
+  CloudCapabilitiesQuery,
+  CloudCapabilitiesPagination,
+  CloudCapabilityDevice,
+  CloudCapabilitiesResponse,
+  CloudRequestSessionInput,
+  CloudSessionRequestResponse,
+  CloudExecuteInput,
+  CloudStopSessionResponse
+} from '@oahl/sdk';
+```
+
+| Interface | Description |
+|---|---|
+| `CloudCapabilitiesQuery` | Filter and pagination options for `getCapabilities` |
+| `CloudCapabilitiesPagination` | Pagination metadata returned with capability results |
+| `CloudCapabilityDevice` | A single device entry in a capabilities response |
+| `CloudCapabilitiesResponse` | Full response from `GET /v1/capabilities` |
+| `CloudRequestSessionInput` | Input for `requestSession` |
+| `CloudSessionRequestResponse` | Response from `POST /v1/requests` |
+| `CloudExecuteInput` | Input for `CloudClient.execute` |
+| `CloudStopSessionResponse` | Response from stopping a cloud session |
+
+The `Device`, `Capability`, and `Session` types used by `OahlClient` are imported from `@oahl/core`.
+
+---
+
+## Full end-to-end example
+
+This example demonstrates the complete cloud relay flow: discover, reserve, execute, and stop.
+
+```typescript
+import { CloudClient } from '@oahl/sdk';
+
+const cloud = new CloudClient(
+  'https://oahl.onrender.com',
+  process.env.OAHL_AGENT_API_KEY
+);
+
+async function main() {
+  // 1. Discover available camera devices
+  const { devices, pagination } = await cloud.getCapabilities({
+    capability: 'camera.capture',
+    page: 1,
+    page_size: 25
+  });
+
+  console.log(`Found ${pagination?.total ?? devices.length} matching device(s)`);
+
+  if (devices.length === 0) {
+    console.log('No devices available');
+    return;
+  }
+
+  const device = devices[0];
+  console.log(`Using device ${device.id} on node ${device.node_id}`);
+
+  // 2. Reserve the device
+  const { session_id } = await cloud.requestSession({
+    capability: 'camera.capture',
+    device_id: device.id
+  });
+
+  console.log(`Session opened: ${session_id}`);
+
+  try {
+    // 3. Execute the capability
+    const result = await cloud.execute(session_id, {
+      capability: 'camera.capture',
+      params: { resolution: '1080p', format: 'jpg' },
+      timeout_ms: 60000
+    });
+
+    console.log('Result:', JSON.stringify(result, null, 2));
+  } finally {
+    // 4. Always stop the session
+    await cloud.stopSession(session_id);
+    console.log('Session stopped');
+  }
+}
+
+main().catch(console.error);
+```
+
+---
+
+## Error handling
+
+`OahlClient` and `CloudClient` both throw a standard `Error` when the server responds with a non-2xx status code. The error message includes the HTTP status and the raw response body.
+
+```typescript
+import { CloudClient } from '@oahl/sdk';
+
+const cloud = new CloudClient('https://oahl.onrender.com', process.env.OAHL_AGENT_API_KEY);
+
+try {
+  const { session_id } = await cloud.requestSession({ capability: 'camera.capture' });
+  // ...
+} catch (err) {
+  // err.message contains the HTTP status code and response body
+  // e.g. "HTTP error 404: No device available for capability camera.capture"
+  console.error('Request failed:', err.message);
+}
+```
+
+<Tip>
+  Wrap `execute` in a `try/finally` block so `stopSession` is always called — even when execution fails. Leaked sessions hold device reservations and can block other agents.
+</Tip>

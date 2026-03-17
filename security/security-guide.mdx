@@ -1,0 +1,295 @@
+---
+title: "Security guide"
+description: "How OAHL secures agent-to-hardware communication — implemented controls, known gaps, and compensating measures."
+keywords: ["security", "authentication", "bearer token", "access policy", "session", "docker", "sandboxing", "policy engine"]
+---
+
+OAHL bridges software agents and physical hardware. That boundary demands careful security design. This page describes every control that is currently active, every gap that is not yet closed, and the compensating measures you should apply in the meantime.
+
+<Warning>
+Some security controls described on this page are **not yet implemented** (Phase 4 of the roadmap). Read the [known gaps](#known-security-gaps) section before running OAHL in a production environment.
+</Warning>
+
+## Defence layers
+
+OAHL applies security at multiple layers so that a weakness in one layer does not compromise the whole system.
+
+<Columns cols={3}>
+  <Card title="Authentication" icon="key">
+    Bearer tokens for agents; provider API keys for node registration. The two key spaces are strictly distinct.
+  </Card>
+  <Card title="Access policies" icon="shield">
+    Per-device visibility rules and agent/org allow and deny lists enforced by the cloud on every request.
+  </Card>
+  <Card title="Session exclusivity" icon="lock">
+    One agent holds a device session at a time. Concurrent reservation attempts are rejected.
+  </Card>
+  <Card title="Policy engine" icon="sliders">
+    The local node enforces per-device capability allow and deny lists before any adapter execution.
+  </Card>
+  <Card title="Container sandboxing" icon="box">
+    Docker isolates the OAHL server from the host OS. Only the required hardware devices are mounted into the container.
+  </Card>
+  <Card title="Network isolation" icon="network">
+    The local node should run on an isolated network. Do not expose it to the public internet without a proxy or VPN.
+  </Card>
+</Columns>
+
+---
+
+## Authentication
+
+### Agent API keys
+
+Every agent request to a cloud endpoint must carry a Bearer token:
+
+```http
+Authorization: Bearer <agent_api_key>
+```
+
+API keys are provisioned through the Developer Portal (`/v1/portal/agents`) and validated against Redis on every request. There is no session cookie or client-side storage — the key is the credential.
+
+### Provider API keys
+
+When a hardware node registers with the cloud via `POST /v1/provider/nodes/register`, it authenticates with a separate `provider_api_key`. This key space is completely distinct from agent keys — an agent key cannot be used as a provider key and vice versa.
+
+### Agent identity headers
+
+<Warning>
+Agent identity headers are **self-asserted in v1**. There is no cryptographic validation. Any HTTP client can forge them.
+</Warning>
+
+Three headers carry the agent's declared identity:
+
+| Header | Description |
+|---|---|
+| `x-agent-id` | Unique identifier for the calling agent |
+| `x-agent-org-id` | Organisation the agent belongs to |
+| `x-agent-roles` | Comma-separated list of roles claimed by the agent |
+
+These headers are used by the cloud to evaluate `allowed_agents` and `allowed_orgs` lists on device access policies. Because they are not signed, you should treat them as **advisory trust signals only**.
+
+**Compensating control:** Use `allowed_agents` and `allowed_orgs` lists only with agents whose API keys were provisioned through a controlled process where the provisioning system also distributes the identity values. See the [planned fix](#1-self-asserted-agent-identity-headers) below.
+
+---
+
+## Session exclusivity
+
+The `SessionManager` enforces that each physical device can have at most one active session at a time. When an agent calls `POST /v1/sessions`, the server checks for an existing active session for the requested device:
+
+```typescript
+startSession(deviceId: string): Session {
+  const activeSession = this.getActiveSessionForDevice(deviceId);
+  if (activeSession) {
+    throw new Error(`Device ${deviceId} already has an active session`);
+  }
+  // ...
+}
+```
+
+A concurrent reservation attempt returns an error immediately. This prevents two agents from sending conflicting commands to the same piece of hardware.
+
+Sessions have a `status` of `active` or `stopped`. The `SessionManager` cleans up stale entries automatically when a device is next queried:
+
+```typescript
+getActiveSessionForDevice(deviceId: string): Session | undefined {
+  const sessionId = this.activeSessionsByDevice.get(deviceId);
+  if (!sessionId) return undefined;
+
+  const session = this.sessions.get(sessionId);
+  if (!session || session.status !== 'active') {
+    this.activeSessionsByDevice.delete(deviceId);
+    return undefined;
+  }
+  return session;
+}
+```
+
+You can limit session duration with [`policy.max_session_minutes`](/security/access-policies#policy-max-session-minutes) in your device config.
+
+---
+
+## Declarative access policies
+
+Every device carries an `access_policy` object that the cloud evaluates on every discovery and session-request call. Agents receive HTTP 403 if access is denied.
+
+The three visibility modes are:
+
+- **`public`** — any authenticated agent can discover and use the device
+- **`shared`** — only agents in `allowed_agents` or organisations in `allowed_orgs`
+- **`private`** — only the device owner and agents explicitly in `allowed_agents`
+
+You can also maintain a `denied_agents` list that always blocks specific agents, even if they would otherwise qualify.
+
+For the full field reference and scenario examples, see [Access policies](/security/access-policies).
+
+---
+
+## Policy engine (local node)
+
+The `PolicyEngine` on the local node enforces per-device capability restrictions **before** any adapter execution. This is a second layer of enforcement that operates entirely within your network, independent of the cloud.
+
+### How it works
+
+Capability names are normalised to lowercase before comparison. Evaluation follows this order:
+
+<Steps>
+  <Step title="Check disabledCapabilities">
+    If the requested capability appears in `disabledCapabilities`, access is denied immediately — even if the capability is also in `allowedCapabilities`.
+
+    ```typescript
+    if (disabledCapabilities.includes(requestedCapability)) {
+      return false;
+    }
+    ```
+  </Step>
+  <Step title="Check allowedCapabilities">
+    If `allowedCapabilities` is non-empty and the requested capability is not in the list, access is denied.
+
+    ```typescript
+    if (allowedCapabilities.length > 0 && !allowedCapabilities.includes(requestedCapability)) {
+      return false;
+    }
+    ```
+  </Step>
+  <Step title="Allow">
+    If neither check blocks the request, the capability is allowed. If no policy is registered for the device at all, all capabilities are allowed by default.
+  </Step>
+</Steps>
+
+### Configuring policies
+
+Policies are declared in `oahl-config.json` under the `policies` array:
+
+```json oahl-config.json
+{
+  "policies": [
+    {
+      "deviceId": "usb-cam-1",
+      "maxDurationMs": 1800000,
+      "allowedCapabilities": ["capture_image", "hardware.baseline"],
+      "disabledCapabilities": []
+    },
+    {
+      "deviceId": "adb-device-1",
+      "maxDurationMs": 1800000,
+      "allowedCapabilities": [],
+      "disabledCapabilities": ["system.shell", "app.install", "app.uninstall"]
+    }
+  ]
+}
+```
+
+<Tip>
+Disable any capabilities that can physically damage hardware or cause unintended side effects. For Android devices, `system.shell` and `app.install` are common candidates for the deny list in shared environments.
+</Tip>
+
+---
+
+## Container sandboxing
+
+Running the OAHL server in Docker provides OS-level isolation from the host. The node process cannot access host files, network interfaces, or devices beyond what is explicitly mounted.
+
+**Mount only the hardware devices your node needs:**
+
+```yaml docker-compose.yml
+services:
+  oahl-node:
+    image: oahl-server
+    devices:
+      - /dev/video0:/dev/video0   # USB camera only
+    # Do NOT use privileged: true unless absolutely required
+```
+
+<Warning>
+Avoiding `privileged: true` is important. A privileged container has full access to all host devices. Mount only the specific `/dev` entries your adapters require.
+</Warning>
+
+---
+
+## Network security
+
+The local OAHL node server provides no built-in authentication on its own HTTP port. It is designed to be reached from the cloud relay, not directly from the public internet.
+
+<Steps>
+  <Step title="Run on an isolated network">
+    Place the node on a VLAN or private network segment not reachable from the public internet.
+  </Step>
+  <Step title="Use HTTPS on all cloud connections">
+    The `cloud_url` in `oahl-config.json` must use `https://`. Never use `http://` for cloud relay connections.
+  </Step>
+  <Step title="Add an authentication proxy if needed">
+    If the node HTTP port must be reachable externally, place an authentication proxy (e.g. nginx with mTLS, or a VPN gateway) in front of it.
+  </Step>
+  <Step title="Enforce TLS on the cloud relay">
+    Short session lifetimes reduce the window for replay attacks. Until nonce-based replay protection is implemented, TLS is your main defence against captured requests.
+  </Step>
+</Steps>
+
+---
+
+## Known security gaps
+
+The following controls are on the Phase 4 roadmap but have **not yet been implemented**. Apply the compensating controls listed for each until the fix ships.
+
+### 1. Self-asserted agent identity headers
+
+`x-agent-id`, `x-agent-org-id`, and `x-agent-roles` are read directly from the request with no cryptographic validation.
+
+- **Compensating control:** Provision agent API keys through a controlled process where the provisioning system also distributes identity values. Pair keys with identity out-of-band.
+- **Planned fix:** Signed JWT agent identity bound to the Bearer token, or mutual TLS (mTLS) client certificate verification.
+
+### 2. No replay protection
+
+There is no nonce or HMAC signing on request payloads. A captured API request could theoretically be replayed within the session validity window.
+
+- **Compensating control:** Keep session lifetimes short via `policy.max_session_minutes`. Enforce HTTPS / TLS on all connections to the cloud relay.
+- **Planned fix:** Short-lived nonces or HMAC request signatures.
+
+### 3. No rate limiting
+
+There is no per-agent or per-node rate limiting on the cloud relay. A misbehaving agent can flood the system.
+
+- **Planned fix:** Rate limiting middleware with Redis-backed counters; HTTP 429 responses with `Retry-After` headers.
+
+### 4. No node attestation
+
+When a node registers via `POST /v1/provider/nodes/register`, the cloud accepts the registration based on the `provider_api_key` alone. There is no cryptographic proof that the registering node is running unmodified OAHL software.
+
+- **Planned fix:** Signed node metadata, hardware trust level classification (attested vs. self-declared), and a formal attestation profile.
+
+### 5. No cloud-side schema validation
+
+Execution `params` are forwarded from the cloud to the node without JSON Schema validation at the cloud layer. Schema enforcement currently relies on the adapter and the calling agent.
+
+- **Planned fix:** Cloud-side validation of `params` against the capability's registered JSON Schema before forwarding to the node.
+
+### 6. Portal PIN stored in plaintext
+
+The Developer Portal (`/v1/portal/auth`) stores 6-digit PINs in Redis in plaintext.
+
+- **Compensating control:** Do not use the Developer Portal for production systems without hashing PINs first (e.g., bcrypt).
+- **Planned fix:** bcrypt or Argon2 hashing for portal authentication credentials.
+
+---
+
+## Security roadmap
+
+| Control | Status |
+|---|---|
+| Bearer token auth | Implemented |
+| Device access policy (visibility, allow/deny lists) | Implemented |
+| Session exclusivity | Implemented |
+| Policy engine (local node capability allow/deny) | Implemented |
+| Signed JWT / mTLS agent identity | Planned (Phase 4) |
+| Replay protection / nonces | Planned (Phase 4) |
+| Rate limiting (HTTP 429) | Planned (Phase 4) |
+| Node attestation | Planned (Phase 4) |
+| Cloud-side JSON Schema validation | Planned (Phase 4) |
+| Portal PIN hashing | Needed |
+
+---
+
+## Responsible disclosure
+
+If you discover a security vulnerability in OAHL, please open a private security advisory on the [GitHub repository](https://github.com/fredabila/oahl) rather than filing a public issue. Include a description of the vulnerability, steps to reproduce, and the potential impact.

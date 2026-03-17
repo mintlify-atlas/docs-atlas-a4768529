@@ -1,0 +1,206 @@
+---
+title: "oahl create-adapter"
+description: "Scaffold a new OAHL adapter package with a complete TypeScript implementation."
+---
+
+The `create-adapter` command generates a ready-to-edit adapter package in your workspace. The scaffold includes a valid `Adapter` interface implementation, build configuration, and README.
+
+```bash
+oahl create-adapter <name>
+```
+
+## Arguments
+
+<ParamField path="name" type="string" required>
+  The adapter name. Can be a bare name (e.g. `my-sensor`) or a scoped package name (e.g. `@acme/my-sensor`).
+</ParamField>
+
+## Options
+
+<ParamField path="--dir" type="string" default=".">
+  Parent directory where the adapter folder is created.
+
+  ```bash
+  oahl create-adapter my-sensor --dir packages
+  ```
+</ParamField>
+
+## Name normalization
+
+The CLI normalizes the adapter name before creating any files:
+
+1. If `name` is scoped (starts with `@`), the scope is stripped to produce the package basename.
+2. The prefix `adapter-` is prepended if not already present.
+3. The npm package name becomes `@oahl/<normalized-name>`.
+4. The TypeScript class name is derived by splitting on non-alphanumeric characters, capitalizing each part, and appending `Adapter`.
+
+| Input | Normalized package name | Class name |
+|---|---|---|
+| `my-sensor` | `adapter-my-sensor` | `AdapterMySensorAdapter` |
+| `webcam` | `adapter-webcam` | `AdapterWebcamAdapter` |
+| `adapter-rtl-sdr` | `adapter-rtl-sdr` | `AdapterRtlSdrAdapter` |
+| `@acme/adapter-foo` | `adapter-foo` | `AdapterFooAdapter` |
+
+## Generated files
+
+Running `oahl create-adapter my-sensor` in the current directory creates:
+
+```
+adapter-my-sensor/
+├── package.json
+├── tsconfig.json
+├── README.md
+└── src/
+    └── index.ts
+```
+
+### package.json
+
+```json package.json
+{
+  "name": "@oahl/adapter-my-sensor",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "peerDependencies": {
+    "@oahl/core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.10.0"
+  }
+}
+```
+
+### tsconfig.json
+
+```json tsconfig.json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true
+  },
+  "include": ["src/**/*"]
+}
+```
+
+### src/index.ts
+
+The generated adapter class implements the full `Adapter` interface from `@oahl/core`:
+
+```typescript src/index.ts
+import { Adapter, Device, Capability } from '@oahl/core';
+
+export default class AdapterMySensorAdapter implements Adapter {
+  id = 'adapter-my-sensor';
+
+  async initialize(): Promise<void> {
+    console.log('[adapter-my-sensor] Initialized');
+  }
+
+  async healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }> {
+    return { status: 'ok' };
+  }
+
+  async getDevices(): Promise<Device[]> {
+    return [
+      {
+        id: 'adapter-my-sensor-device-01',
+        type: 'custom',
+        name: 'AdapterMySensorAdapter Device',
+        isPublic: false
+      }
+    ];
+  }
+
+  async getCapabilities(deviceId: string): Promise<Capability[]> {
+    if (deviceId !== 'adapter-my-sensor-device-01') {
+      throw new Error('Device not found');
+    }
+
+    return [
+      {
+        name: 'custom.ping',
+        description: 'Smoke-test capability for this adapter',
+        schema: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' }
+          }
+        }
+      }
+    ];
+  }
+
+  async execute(deviceId: string, capabilityName: string, args: any): Promise<any> {
+    if (deviceId !== 'adapter-my-sensor-device-01') {
+      throw new Error('Device not found');
+    }
+
+    if (capabilityName === 'custom.ping') {
+      return {
+        ok: true,
+        adapter: this.id,
+        message: args?.message || 'pong',
+        timestamp: Date.now()
+      };
+    }
+
+    throw new Error('Capability not supported');
+  }
+}
+```
+
+## Completion output
+
+```
+✅ Adapter scaffold created at /your/path/adapter-my-sensor
+Next steps:
+1. cd adapter-my-sensor
+2. npm install
+3. npm run build
+4. oahl install @oahl/adapter-my-sensor
+```
+
+## After scaffolding
+
+<Steps>
+  <Step title="Install dependencies">
+    ```bash
+    cd adapter-my-sensor
+    npm install
+    ```
+  </Step>
+  <Step title="Implement your hardware logic">
+    Edit `src/index.ts`. Replace the placeholder `getDevices`, `getCapabilities`, and `execute` methods with real hardware interactions.
+  </Step>
+  <Step title="Build">
+    ```bash
+    npm run build
+    ```
+  </Step>
+  <Step title="Install into a node workspace">
+    ```bash
+    oahl install @oahl/adapter-my-sensor
+    ```
+
+    This runs `npm install @oahl/adapter-my-sensor` and adds the package name to the `plugins` array in `oahl-config.json`.
+  </Step>
+  <Step title="Run conformance checks">
+    Verify the adapter meets OAHL protocol requirements:
+
+    ```bash
+    oahl conformance ./adapter-my-sensor/dist/index.js
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  If the target directory already exists, the command exits with an error rather than overwriting existing files.
+</Tip>

@@ -1,0 +1,114 @@
+---
+title: "oahl install / remove"
+description: "Install and remove hardware adapter plugins, keeping oahl-config.json in sync."
+---
+
+## oahl install
+
+Installs an adapter plugin via `npm install` and, if an `oahl-config.json` exists in the current directory, adds the package name to the `plugins` array.
+
+```bash
+oahl install <adapter>
+```
+
+### Arguments
+
+<ParamField path="adapter" type="string" required>
+  The npm package name of the adapter to install (e.g. `@oahl/adapter-usb-camera`).
+</ParamField>
+
+### Behavior
+
+1. Runs `npm install <adapter>` with inherited stdio so you see npm output directly.
+2. Reads `oahl-config.json` from the current directory.
+3. If the file exists and `plugins` does not already contain the adapter name, appends it and saves the file.
+4. Prints a confirmation and instructs you to restart the node.
+
+### Example
+
+```bash
+oahl install @oahl/adapter-usb-camera
+```
+
+```
+📦 Installing adapter: @oahl/adapter-usb-camera...
+added 12 packages in 3s
+
+✅ Added @oahl/adapter-usb-camera to oahl-config.json plugins list.
+
+✨ Successfully installed @oahl/adapter-usb-camera. Restart your node to enable it.
+```
+
+Resulting change in `oahl-config.json`:
+
+```json
+{
+  "plugins": [
+    "@oahl/adapter-mock",
+    "@oahl/adapter-usb-camera"
+  ]
+}
+```
+
+### Error handling
+
+If `npm install` fails (e.g. the package does not exist or there is a network error):
+
+```
+❌ Failed to install adapter: Command failed: npm install @oahl/adapter-does-not-exist
+```
+
+---
+
+## oahl remove
+
+Uninstalls an adapter plugin via `npm uninstall` and removes its entry from the `plugins` array in `oahl-config.json`.
+
+```bash
+oahl remove <adapter>
+```
+
+### Arguments
+
+<ParamField path="adapter" type="string" required>
+  The npm package name of the adapter to remove (e.g. `@oahl/adapter-usb-camera`).
+</ParamField>
+
+### Behavior
+
+1. Runs `npm uninstall <adapter>` with inherited stdio.
+2. Reads `oahl-config.json` from the current directory.
+3. If the file exists, filters the adapter name from `plugins` and saves the file.
+
+### Example
+
+```bash
+oahl remove @oahl/adapter-usb-camera
+```
+
+```
+🗑️ Removing adapter: @oahl/adapter-usb-camera...
+removed 12 packages in 1s
+
+✅ Removed @oahl/adapter-usb-camera from oahl-config.json plugins list.
+
+✨ Successfully removed @oahl/adapter-usb-camera.
+```
+
+### Error handling
+
+If `npm uninstall` fails:
+
+```
+❌ Failed to remove adapter: Command failed: npm uninstall @oahl/adapter-usb-camera
+```
+
+---
+
+<Note>
+  Both commands require an `oahl-config.json` in the current directory to update the `plugins` list. If no config file is present, the npm operation still runs but no config changes are made.
+</Note>
+
+<Tip>
+  After installing an adapter, restart your node with `oahl start` to load the new plugin. You can also use `oahl tui` → **Import detected devices from plugins** to automatically discover and register the devices it exposes.
+</Tip>

@@ -1,0 +1,100 @@
+---
+title: "Introduction"
+description: "Open Agent Hardware Layer — connect physical hardware to AI agents through standardized APIs"
+---
+
+# Open Agent Hardware Layer (OAHL)
+
+OAHL is an open-source framework for exposing real hardware capabilities to AI agents through standardized APIs. It bridges the physical world and AI systems by letting hardware owners connect devices — cameras, software-defined radios, sensors, phones, and robots — to a node that AI agents can securely discover and control.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Connect your first hardware device and run a capability in minutes
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand how nodes, adapters, sessions, and the cloud relay fit together
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Full REST API reference for agents and hardware providers
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/overview">
+    Complete guide to the `oahl` command-line tool
+  </Card>
+</CardGroup>
+
+## Why OAHL exists
+
+AI agents today can use software tools, web APIs, and cloud services — but they generally cannot interact with physical hardware without custom integration work for every device and every agent framework.
+
+OAHL provides a common layer for:
+
+- **Hardware owners** who want to expose devices to agents without writing bespoke integrations
+- **Developers** who want their agents to use real-world sensors, cameras, and other hardware
+- **Platforms** that want to build agent-to-hardware marketplaces
+
+## Core concepts
+
+<AccordionGroup>
+  <Accordion title="Node">
+    A service installed on a machine connected to hardware. The node loads your `oahl-config.json`, initializes adapters, and maintains a persistent connection to the Cloud Registry so remote agents can discover and use your devices.
+  </Accordion>
+  <Accordion title="Adapter">
+    A device-specific plugin that implements the standard `Adapter` interface from `@oahl/core`. Adapters translate OAHL standard commands (like `camera.capture`) into the underlying hardware protocol (V4L2, librtlsdr, ADB, etc.).
+  </Accordion>
+  <Accordion title="Capability">
+    A named, schema-validated action a device can perform — for example `camera.capture`, `radio.scan`, or `sensor.read`. Each capability declares a JSON Schema for its parameters so agents always know what arguments to pass.
+  </Accordion>
+  <Accordion title="Session">
+    A controlled, exclusive allocation of a hardware resource for a single agent request. While an agent holds a session, no other agent can send conflicting commands to the same device.
+  </Accordion>
+  <Accordion title="Policy">
+    Declarative rules in `oahl-config.json` that govern what each agent is allowed to do — which capabilities it may call, how long it may hold a session, and whether the device is public, shared, or private.
+  </Accordion>
+  <Accordion title="Cloud Registry">
+    The hosted hub at `oahl.onrender.com` where local nodes register themselves. AI agents query the registry to discover available hardware globally and request sessions without connecting directly to the hardware node.
+  </Accordion>
+</AccordionGroup>
+
+## How it works
+
+```
+Agent  ──→  Cloud Registry  ──→  Node  ──→  Adapter  ──→  Hardware
+        (discover & session)  (relay)   (translate)   (physical device)
+```
+
+1. An agent calls `GET /v1/capabilities` on the Cloud Registry to discover available hardware.
+2. The agent calls `POST /v1/requests` to reserve an exclusive session on a device.
+3. Within the session, the agent calls `POST /v1/sessions/{id}/execute` with a capability name and parameters.
+4. The Cloud Registry relays the command to the hardware node over WebSocket (or HTTP long-poll fallback).
+5. The node's adapter translates the command, interacts with the physical hardware, and returns the result.
+6. The agent calls `POST /v1/sessions/{id}/stop` to release the device.
+
+## Official SDKs
+
+<CardGroup cols={2}>
+  <Card title="JavaScript / TypeScript SDK" icon="js" href="/agents/sdk-javascript">
+    `@oahl/sdk` — full-featured SDK for Node.js and browser. Includes `OahlClient` for local nodes and `CloudClient` for the cloud relay.
+  </Card>
+  <Card title="Python SDK" icon="python" href="/agents/sdk-python">
+    `oahl` on PyPI — lightweight Python client for AI agents. Supports both local node and cloud relay.
+  </Card>
+</CardGroup>
+
+## Supported hardware
+
+OAHL ships three first-party adapters and has a growing community ecosystem:
+
+| Adapter | Package | Capabilities |
+|---------|---------|-------------|
+| USB Camera | `@oahl/adapter-usb-camera` | `camera.capture`, `camera.stream` |
+| RTL-SDR Radio | `@oahl/adapter-rtl-sdr` | `radio.scan`, `radio.measure_power` |
+| Mock / Virtual | `@oahl/adapter-mock` | `sensor.read` (for testing) |
+| Android (ADB) | `@oahl/adapter-android` | `system.info`, `screen.screenshot`, `system.shell` |
+
+<Tip>
+  You can run OAHL completely offline. Set `cloud_url` to an empty string in your `oahl-config.json` and agents connect to your local node directly on the LAN.
+</Tip>
+
+## License
+
+OAHL is MIT licensed. See the [GitHub repository](https://github.com/fredabila/oahl) for the full text.

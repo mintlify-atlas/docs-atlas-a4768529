@@ -1,0 +1,143 @@
+---
+title: "W3C WoT alignment"
+description: "How OAHL relates to the W3C Web of Things standard, where the two models deliberately diverge, and the forward interoperability path."
+keywords: ["WoT", "Web of Things", "Thing Description", "ActionAffordance", "semantic", "JSON-LD", "interoperability"]
+---
+
+OAHL was designed with a different primary objective from W3C WoT: giving LLM-native AI agents a simple, uniform API for requesting and executing hardware capabilities — without requiring agents to understand network protocols, device drivers, or JSON-LD.
+
+This page explains where the two models align, where they deliberately diverge, and the forward path for WoT interoperability.
+
+---
+
+## Background
+
+The W3C Web of Things (WoT) defines a standard for describing IoT devices using **Thing Descriptions (TDs)** — JSON-LD documents that expose a device's `properties`, `actions`, and `events` (called *affordances*) along with the network-level `forms` (protocol bindings) needed to invoke them.
+
+---
+
+## Where OAHL and WoT align
+
+OAHL's `Capability` type is structurally equivalent to a WoT **ActionAffordance**. Both:
+
+- Name a discrete hardware operation
+- Describe its input schema (WoT uses `input`; OAHL uses `schema` as a JSON Schema object)
+- Associate it with a specific device (WoT: Thing, OAHL: Device)
+
+OAHL already includes two optional WoT-vocabulary fields in the `Capability` and `Device` types:
+
+```typescript
+// packages/core/src/types.ts
+interface Capability {
+  semantic_type?: string;  // e.g. "ActionAffordance" from WoT
+  // ...
+}
+
+interface Device {
+  semantic_context?: string[];  // For W3C WoT @context alignment
+  // ...
+}
+```
+
+These fields propagate through node registration heartbeats and are surfaced in `GET /v1/capabilities` responses.
+
+<Tabs>
+  <Tab title="Capability with semantic_type">
+    ```json
+    {
+      "name": "camera.capture",
+      "semantic_type": "ActionAffordance",
+      "description": "Capture an image from the camera."
+    }
+    ```
+  </Tab>
+  <Tab title="Device with semantic_context">
+    ```json
+    {
+      "id": "usb-camera-01",
+      "semantic_context": ["https://www.w3.org/2019/wot/td/v1"]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Comparison: OAHL concept vs WoT equivalent
+
+| OAHL concept | WoT equivalent | Notes |
+|---|---|---|
+| `Capability` | `ActionAffordance` | Structurally equivalent; OAHL uses JSON Schema for input, WoT uses `input` |
+| `Device` | `Thing` | OAHL adds `access_policy` and session exclusivity not present in WoT |
+| `semantic_type` field | `@type` in JSON-LD | Opt-in; OAHL does not mandate JSON-LD |
+| `semantic_context` field | `@context` in TD | Forwards path for Thing Directory integration |
+| `description` + `instructions` fields | `description` only | OAHL adds a separate `instructions` field for LLM agent guidance |
+| `TransportAttachmentProfile` | `forms[]` protocol bindings | OAHL treats transport as a node-local adapter concern |
+| Cloud Registry | W3C Thing Directory | OAHL registry is agent-auth-gated and access-policy-aware |
+| `device.id` + `capability.name` strings | Thing Description URI (`id`) | No URIs in v1; planned for a future version |
+| Session exclusivity | None | WoT is stateless; OAHL adds cooperative locking |
+| `access_policy` (visibility, allow/deny) | None in WoT TD | External access control only in WoT |
+| `agent_recovery_hints` in error responses | None | OAHL-specific LLM affordance |
+| `hardware.baseline` capability | None | OAHL-specific LLM fallback affordance |
+
+---
+
+## Deliberate divergences
+
+<AccordionGroup>
+  <Accordion title="Description format: plain JSON vs JSON-LD">
+    WoT uses JSON-LD with `@context` and `@type`. OAHL uses plain JSON.
+
+    **Rationale:** JSON-LD adds tooling complexity without benefit for LLM agents that rely on natural-language descriptions rather than semantic graph traversal.
+  </Accordion>
+
+  <Accordion title="Affordance model: single Capability vs Property/Action/Event">
+    WoT distinguishes Property, Action, and Event affordances. OAHL exposes a single `Capability` type (Action-only in v1).
+
+    **Rationale:** Agents request executable actions. Passive property reads and event subscriptions are modelled as capabilities (e.g. `sensor.read`, `sensor.stream`) rather than separate affordance classes.
+  </Accordion>
+
+  <Accordion title="Protocol binding: TransportAttachmentProfile vs forms[]">
+    WoT binds protocols per-affordance using `forms[]` with protocol URIs. OAHL uses a `TransportAttachmentProfile` on the adapter and node side.
+
+    **Rationale:** Transport is a node-local concern. Agents never select protocols directly — the relay and adapter handle transport selection transparently.
+  </Accordion>
+
+  <Accordion title="Discovery: Cloud Registry vs Thing Directory">
+    WoT TDs are typically publicly readable. OAHL's Cloud Registry is agent-auth-gated and enforces the device `access_policy` during discovery.
+
+    **Rationale:** Hardware access requires access control from the discovery layer, not just at execution time.
+  </Accordion>
+
+  <Accordion title="Event streaming: not yet implemented">
+    WoT supports `EventAffordance` with SSE or WebSocket forms. OAHL does not yet implement event streaming.
+
+    This is planned for v2 via SSE. See the [standardization roadmap](/advanced/standardization-roadmap).
+  </Accordion>
+
+  <Accordion title="Security vocabulary">
+    WoT defines Security Schemes (`bearer`, `apikey`, etc.). OAHL uses bearer auth with self-asserted identity headers and adds an access-policy dimension (visibility, allow/deny lists) that WoT security schemes do not cover.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Forward interoperability path
+
+OAHL's current design does not prevent future WoT alignment. The recommended approach:
+
+<Steps>
+  <Step title="Retain semantic fields">
+    Keep `semantic_type` and `semantic_context` fields on `Capability` and `Device`. These are already in the type system and propagated through the API.
+  </Step>
+  <Step title="Add a Thing Description endpoint (future)">
+    Add `GET /v1/things/{device_id}` to render a WoT-compatible Thing Description for a device, translating OAHL capabilities into ActionAffordances with appropriate `forms`.
+  </Step>
+  <Step title="Register with a W3C Thing Directory (future)">
+    Periodically push generated TDs to a public W3C Thing Directory endpoint. This preserves OAHL's simplified agent-native model while offering WoT interoperability as an opt-in surface.
+  </Step>
+</Steps>
+
+<Tip>
+  To declare WoT alignment today, set `semantic_type: "ActionAffordance"` on your capabilities and add the WoT `@context` URL to `semantic_context` on your device. This costs nothing and positions your adapter for future Thing Directory integration.
+</Tip>

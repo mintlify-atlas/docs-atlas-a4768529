@@ -1,0 +1,88 @@
+---
+title: 'Create session'
+description: 'Reserve an exclusive hardware session with POST /v1/requests.'
+---
+
+## `POST /v1/requests`
+
+Allocates an exclusive session on a device. Sessions are exclusive — a device can only have one active session at a time. Once you have a `session_id`, use it to call [execute](/api-reference/execute) or [execute-batch](/api-reference/execute-batch), then [stop](/api-reference/stop-session) the session when done.
+
+You must supply either `capability` or `device_id`:
+
+- Supply `capability` to let the cloud find any available device that supports it.
+- Supply `device_id` to target a specific device.
+- Supply both to require a specific device with a specific capability.
+
+### Request body
+
+<ParamField body="capability" type="string">
+  Required if `device_id` is omitted. The cloud selects the first available device that exposes this capability (e.g. `camera.capture`).
+</ParamField>
+
+<ParamField body="device_id" type="string">
+  Target a specific device by ID. Required if `capability` is omitted.
+</ParamField>
+
+<ParamField body="node_id" type="string">
+  Restrict selection to a specific hardware node. Requires `device_id`.
+</ParamField>
+
+### Response
+
+<ResponseField name="session_id" type="string" required>
+  Opaque session identifier. Use this in all subsequent `/v1/sessions/{session_id}/*` calls.
+</ResponseField>
+
+<ResponseField name="status" type="string" required>
+  Always `accepted` on success.
+</ResponseField>
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `400` | Missing or invalid request parameters |
+| `401` | Missing or invalid agent API key |
+| `403` | Agent identity does not have access to this device |
+| `404` | No matching available hardware found |
+
+<RequestExample>
+
+```bash cURL — by capability
+curl -X POST https://oahl.onrender.com/v1/requests \
+  -H "Authorization: Bearer <agent_api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{"capability": "camera.capture"}'
+```
+
+```bash cURL — by device ID
+curl -X POST https://oahl.onrender.com/v1/requests \
+  -H "Authorization: Bearer <agent_api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{"device_id": "cam-01", "node_id": "node-abc"}'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "session_id": "sess-3f7a2c1d-e8b5-4f12-a903-7d1c2e3f4a5b",
+  "status": "accepted"
+}
+```
+
+```json 404
+{
+  "error": "No available device found for capability: camera.capture"
+}
+```
+
+```json 403
+{
+  "error": "Agent does not have access to device cam-01"
+}
+```
+
+</ResponseExample>

@@ -1,0 +1,181 @@
+---
+title: 'WebSocket relay'
+description: 'Real-time bidirectional relay between hardware nodes and the cloud over wss://<host>/ws/provider.'
+---
+
+## WebSocket endpoint
+
+```
+wss://<host>/ws/provider
+```
+
+The WebSocket relay is the **preferred transport** for provider nodes. It enables the cloud to push commands to a node as soon as they arrive, and allows the node to stream results back immediately — eliminating the polling round-trip.
+
+## Connecting
+
+Pass the node ID as a URL query parameter and the provider API key as a header:
+
+```
+wss://oahl.onrender.com/ws/provider?node_id=node-abc
+```
+
+| Connection parameter | Location | Description |
+|---|---|---|
+| `node_id` | URL query parameter | The `node_id` registered via `POST /v1/provider/nodes/register` |
+| `Authorization` | HTTP upgrade header | `Bearer <provider_api_key>` |
+| `x-node-id` | HTTP upgrade header | Alternative way to pass the node ID (same value as the query parameter) |
+
+### Example connection (Node.js)
+
+```javascript
+import WebSocket from 'ws';
+
+const ws = new WebSocket(
+  'wss://oahl.onrender.com/ws/provider?node_id=node-abc',
+  {
+    headers: {
+      'Authorization': 'Bearer <provider_api_key>',
+      'x-node-id': 'node-abc',
+    },
+  }
+);
+
+ws.on('open', () => console.log('Connected to OAHL relay'));
+```
+
+## Message format
+
+All messages are JSON-encoded text frames.
+
+### Cloud → Node messages
+
+The cloud sends commands to the node when an agent calls [execute](/api-reference/execute) or [execute-batch](/api-reference/execute-batch).
+
+#### Single command
+
+```json
+{
+  "type": "command",
+  "payload": {
+    "requestId": "cmd-3a7f92bc-1234",
+    "deviceId": "cam-01",
+    "capability": "camera.capture",
+    "params": { "resolution": "1080p" },
+    "dispatchedAt": "2026-03-15T12:00:00.000Z"
+  }
+}
+```
+
+<ResponseField name="type" type="string">
+  Always `command` for single-execution messages.
+</ResponseField>
+
+<ResponseField name="payload.requestId" type="string">
+  Unique request ID. Echo this back in the result message.
+</ResponseField>
+
+<ResponseField name="payload.deviceId" type="string">
+  ID of the device to execute the capability on.
+</ResponseField>
+
+<ResponseField name="payload.capability" type="string">
+  Capability to execute.
+</ResponseField>
+
+<ResponseField name="payload.params" type="object">
+  Arguments for the capability.
+</ResponseField>
+
+<ResponseField name="payload.dispatchedAt" type="string">
+  ISO 8601 datetime when the cloud dispatched the command.
+</ResponseField>
+
+#### Batch command
+
+```json
+{
+  "type": "command-batch",
+  "payload": {
+    "requestId": "cmd-batch-7c3e2a1d-9012",
+    "deviceId": "arm-01",
+    "commands": [
+      { "capability": "arm.move", "params": { "x": 10, "y": 0, "z": 5 } },
+      { "capability": "arm.close_gripper", "params": {} }
+    ],
+    "dispatchedAt": "2026-03-15T12:05:00.000Z"
+  }
+}
+```
+
+<ResponseField name="type" type="string">
+  Always `command-batch` for batch-execution messages.
+</ResponseField>
+
+<ResponseField name="payload.commands" type="object[]">
+  Ordered array of `{ capability, params }` objects to execute sequentially.
+</ResponseField>
+
+### Node → Cloud messages
+
+After executing a command, the node sends a result message back over the same connection.
+
+```json
+{
+  "type": "result",
+  "requestId": "cmd-3a7f92bc-1234",
+  "result": {
+    "schema_version": "1.0",
+    "operation_id": "cmd-3a7f92bc-1234",
+    "status": "success",
+    "completion": { "done": true, "state": "completed" },
+    "capability": "camera.capture",
+    "device_id": "cam-01",
+    "timestamp": "2026-03-15T12:00:05.000Z",
+    "data": { "image_url": "https://storage.example.com/captures/img-001.jpg" },
+    "error": null,
+    "meta": { "adapter_id": "camera-adapter-v2", "relay_latency_ms": 142 }
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `type` | Always `result` |
+| `requestId` | Echo of the `requestId` from the received command |
+| `result` | Canonical [ExecutionResult](/api-reference/execute#response-body-executionresult) envelope |
+
+### Node message loop example
+
+```javascript
+ws.on('message', async (raw) => {
+  const message = JSON.parse(raw);
+
+  if (message.type === 'command') {
+    const { requestId, deviceId, capability, params } = message.payload;
+    const result = await adapter.execute(deviceId, capability, params);
+    ws.send(JSON.stringify({ type: 'result', requestId, result }));
+  }
+
+  if (message.type === 'command-batch') {
+    const { requestId, deviceId, commands } = message.payload;
+    const results = [];
+    for (const cmd of commands) {
+      results.push(await adapter.execute(deviceId, cmd.capability, cmd.params));
+    }
+    const result = buildBatchResult(requestId, deviceId, results);
+    ws.send(JSON.stringify({ type: 'result', requestId, result }));
+  }
+});
+```
+
+## WebSocket vs HTTP polling
+
+| Factor | WebSocket | HTTP polling |
+|---|---|---|
+| Latency | Lower — command pushed immediately | Higher — up to 30 s poll wait |
+| Connection overhead | Persistent connection | New HTTP request per poll cycle |
+| Firewall compatibility | May be blocked | Works through most proxies |
+| Serverless nodes | Not suitable | Suitable |
+| Recommended for | Long-running nodes with stable network | Restrictive environments or short-lived nodes |
+
+Nodes that cannot maintain a WebSocket connection should use [Poll commands](/api-reference/poll-commands) and [Submit result](/api-reference/submit-result) instead.

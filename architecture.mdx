@@ -1,0 +1,219 @@
+---
+title: "Architecture"
+description: "How OAHL nodes, adapters, sessions, policies, and the cloud relay fit together."
+---
+
+OAHL is designed as a layered system. Hardware is wrapped by adapters, adapters are managed by a local node, and the node connects outbound to a Cloud Registry so remote agents can discover and use hardware without ever touching the hardware owner's machine directly.
+
+## Execution flow
+
+Every agent interaction follows this path:
+
+```
+Agent  ──→  Cloud Registry  ──→  Node  ──→  Adapter  ──→  Hardware
+        (discover & session)  (relay)   (translate)   (physical device)
+```
+
+1. An agent calls `GET /v1/capabilities` on the Cloud Registry to discover available hardware across all registered nodes.
+2. The agent calls `POST /v1/requests` to reserve an exclusive session on a specific device.
+3. The Cloud Registry routes subsequent commands to the owning node over a persistent WebSocket connection (or HTTP long-poll as a fallback).
+4. The node's `PolicyEngine` validates the capability against the device's configured policy.
+5. The node routes the validated command to the appropriate `Adapter`.
+6. The adapter translates the OAHL command into the hardware-specific protocol and returns an `ExecutionResult`.
+7. The result travels back through the same relay path to the agent.
+8. The agent calls `POST /v1/sessions/{id}/stop` to release the device.
+
+## Core concepts
+
+### Node
+
+The node is the open-source daemon that runs on a hardware owner's machine. It:
+
+- Loads `oahl-config.json` on startup
+- Instantiates and initializes each adapter listed in `plugins`
+- Exposes a local HTTP REST API on port `3000` (configurable)
+- Maintains a persistent outbound connection to the Cloud Registry
+- Enforces session exclusivity and policy rules on every incoming request
+
+The node is implemented in `@oahl/server`.
+
+### Adapter
+
+An adapter is a device-specific plugin that implements the `Adapter` interface from `@oahl/core`:
+
+```typescript
+export interface Adapter {
+  id: string;
+  initialize(): Promise<void>;
+  healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }>;
+  getDevices(): Promise<Device[]>;
+  getCapabilities(deviceId: string): Promise<Capability[]>;
+  execute(deviceId: string, capabilityName: string, args: any): Promise<any | ExecutionResult>;
+}
+```
+
+Adapters are distributed as npm packages (e.g. `@oahl/adapter-usb-camera`) and declared in the `plugins` array of `oahl-config.json`. When the node starts, it imports each plugin and calls `initialize()`. During execution it calls `execute()` with the capability name and validated arguments.
+
+### Capability
+
+A capability is a named, schema-validated action a device can perform. Each capability declares a JSON Schema for its parameters so agents always know what arguments to pass.
+
+```typescript
+export interface Capability {
+  name: string;           // e.g. "camera.capture"
+  description: string;
+  schema: any;            // JSON Schema for arguments
+  instructions?: string;  // Natural language hints for AI agents (MCP style)
+  semantic_type?: string; // e.g. "ActionAffordance" from W3C WoT
+  helper_url?: string;
+  template?: string;
+  context?: string;
+  metadata?: Record<string, any>;
+  pricing?: PricingDescriptor;
+}
+```
+
+First-party capabilities include `camera.capture`, `camera.stream`, `radio.scan`, `radio.measure_power`, and `sensor.read`. Any string is a valid capability name, so custom adapters can define their own.
+
+### Session
+
+A session is a controlled, exclusive allocation of a hardware resource for a single agent request. While an agent holds a session, no other agent can send conflicting commands to the same device.
+
+```typescript
+export interface Session {
+  id: string;
+  deviceId: string;
+  startTime: number;
+  status: 'active' | 'stopped';
+}
+```
+
+The `SessionManager` inside `@oahl/core` tracks active sessions. If an agent requests a session on a device that already has an active session, the request is rejected until the existing session is stopped or expires.
+
+### Policy
+
+Policies are declarative rules in `oahl-config.json` that govern what agents may do with a device:
+
+```typescript
+export interface Policy {
+  deviceId: string;
+  maxDurationMs: number;
+  allowedCapabilities: string[];
+  disabledCapabilities: string[];
+}
+```
+
+In `oahl-config.json`, policy configuration lives alongside each device entry:
+
+```json
+{
+  "id": "usb-cam-1",
+  "type": "camera",
+  "adapter": "usb-camera",
+  "capabilities": ["camera.capture"],
+  "access_policy": {
+    "visibility": "public",
+    "allowed_agents": [],
+    "allowed_orgs": [],
+    "denied_agents": []
+  },
+  "policy": {
+    "public": false,
+    "max_session_minutes": 30
+  }
+}
+```
+
+`visibility` can be `"public"`, `"shared"` (allow-list only), or `"private"` (owner and explicit allow-list only). The `PolicyEngine` in `@oahl/core` evaluates every execution request against these rules before forwarding it to the adapter.
+
+### Cloud Registry
+
+The Cloud Registry is the hosted hub at `oahl.onrender.com`. Local nodes connect *outbound* to the registry on startup and maintain a heartbeat. Agents query the registry's REST API to discover available hardware and request sessions — they never connect directly to the hardware owner's machine.
+
+The Cloud Registry is strictly optional. Setting `cloud_url` to an empty string in `oahl-config.json` disables cloud connectivity entirely (see [Offline mode](#offline-mode)).
+
+## Component packages
+
+<CardGroup cols={2}>
+  <Card title="@oahl/core" icon="cube">
+    Domain models (`Device`, `Capability`, `Session`, `Policy`, `ExecutionResult`), the `Adapter` interface, `PolicyEngine`, and `SessionManager`. Every other package depends on this.
+  </Card>
+  <Card title="@oahl/server" icon="server">
+    The Express-based HTTP server that forms the local node daemon. Loads adapters from config, enforces sessions and policies, and provides the `/devices`, `/capabilities`, `/sessions`, and `/execute` REST endpoints.
+  </Card>
+  <Card title="@oahl/cli" icon="terminal">
+    The `oahl` command-line tool. Provides `init`, `start`, `login`, `scan-ports`, `tui`, `install`, `remove`, `create-adapter`, `mcp`, and `conformance` commands.
+  </Card>
+  <Card title="@oahl/sdk" icon="code">
+    The official JavaScript/TypeScript client library. Exports `OahlClient` for direct local-node interaction and `CloudClient` for cloud-relay discovery and execution.
+  </Card>
+  <Card title="@oahl/cloud" icon="cloud">
+    The hosted Cloud Registry infrastructure. Manages node registration, capability indexing, session routing, and the relay between agents and nodes.
+  </Card>
+  <Card title="oahl (Python)" icon="python">
+    Lightweight Python client on PyPI. Mirrors the JS SDK's `OahlClient` and `CloudClient` surface using the `requests` library.
+  </Card>
+  <Card title="@oahl/adapter-usb-camera" icon="camera">
+    First-party adapter for USB and V4L2 cameras. Capabilities: `camera.capture`, `camera.stream`.
+  </Card>
+  <Card title="@oahl/adapter-rtl-sdr" icon="radio">
+    First-party adapter for RTL-SDR software-defined radios. Capabilities: `radio.scan`, `radio.measure_power`.
+  </Card>
+  <Card title="@oahl/adapter-android" icon="mobile">
+    First-party adapter for Android devices via ADB. Capabilities: `screen.screenshot`, `system.info`, `system.shell`, and many more.
+  </Card>
+  <Card title="@oahl/adapter-mock" icon="flask-conical">
+    Virtual sensor adapter for development and testing. Capabilities: `sensor.read`, `ping`.
+  </Card>
+</CardGroup>
+
+## Relay modes
+
+The Cloud Registry relays commands to nodes using two transport modes:
+
+| Mode | When used | Characteristics |
+|------|-----------|----------------|
+| WebSocket fast-path | Node is connected via persistent WebSocket | Low latency; commands are pushed to the node in real time |
+| HTTP long-poll fallback | WebSocket connection is unavailable or behind restrictive NAT | Node polls the registry for pending commands; slightly higher latency |
+
+Nodes automatically negotiate the best available mode on startup. The relay is transparent to agents — both modes expose the same `POST /v1/sessions/{id}/execute` interface.
+
+## Offline mode
+
+The Cloud Registry is optional. To run a 100% private, local-only node with no outbound cloud connection, set `cloud_url` to an empty string:
+
+```json
+{
+  "node_id": "my-local-lab",
+  "cloud_url": "",
+  "devices": []
+}
+```
+
+When `cloud_url` is empty the node skips registration and the cloud heartbeat entirely. Local agents connect directly to `http://localhost:3000` over the LAN. No device information is broadcast to the internet.
+
+<Tip>
+  Offline mode is useful for air-gapped labs, development environments, and privacy-sensitive deployments. All session management, policy enforcement, and capability execution work identically with or without the cloud.
+</Tip>
+
+## Repository layout
+
+```
+oahl/
+├── packages/
+│   ├── core/          # @oahl/core — interfaces, PolicyEngine, SessionManager
+│   ├── server/        # @oahl/server — Express node daemon
+│   ├── cli/           # @oahl/cli — oahl command-line tool
+│   ├── sdk-js/        # @oahl/sdk — JavaScript/TypeScript client
+│   ├── cloud/         # @oahl/cloud — Cloud Registry infrastructure
+│   └── web/           # Web dashboard (optional)
+├── adapters/
+│   ├── adapter-usb-camera/
+│   ├── adapter-rtl-sdr/
+│   ├── adapter-android/
+│   ├── adapter-arduino/
+│   └── adapter-mock/
+└── sdk-python/        # oahl — Python client (PyPI)
+```
+
+Platform packages (`packages/`) and adapter packages (`adapters/`) are kept separate so adapter ecosystem development can evolve independently of the core platform.

@@ -1,0 +1,97 @@
+---
+title: "oahl start"
+description: "Start the local OAHL node daemon, load the config, and connect to the Cloud Registry."
+---
+
+The `start` command launches the local OAHL node process. It loads your `oahl-config.json`, initializes all configured adapter plugins, and registers the node with the Cloud Registry so that agents can discover and use your hardware.
+
+```bash
+oahl start
+```
+
+## Options
+
+<ParamField path="--port" type="number" default="3000">
+  The port the HTTP server listens on.
+
+  ```bash
+  oahl start --port 8080
+  ```
+</ParamField>
+
+<ParamField path="--config" type="string" default="./oahl-config.json">
+  Path to the configuration file.
+
+  ```bash
+  oahl start --config /etc/oahl/node.json
+  ```
+</ParamField>
+
+## Authentication
+
+`oahl start` requires valid credentials before the server process launches. It checks for a `.oahl-session.json` file in the current directory. If the file is missing or contains invalid data, you are prompted interactively:
+
+```
+🔐 Provider Authentication Required
+Enter your Developer Portal credentials to link this node to your account.
+
+? Email Address › you@example.com
+? 6-Digit PIN › ******
+? Remember these credentials on this machine? › Yes
+✅ Credentials saved to .oahl-session.json
+```
+
+If you cancel or supply invalid credentials, the command exits with an error:
+
+```
+❌ Error: Authentication required to start node.
+```
+
+Run `oahl login` beforehand to pre-populate the session file and avoid the prompt.
+
+## Config validation
+
+If the config file does not exist at the resolved path, the command exits immediately:
+
+```
+❌ Error: Configuration file not found at /path/to/oahl-config.json
+Hint: Run "oahl init" to create one.
+```
+
+## How the server is located
+
+The CLI resolves the `@oahl/server` binary using two strategies in order:
+
+1. **Monorepo path** — `../../server/dist/index.js` relative to the CLI's own `dist/` directory. This is used when the CLI is running inside the OAHL source monorepo.
+2. **npm install path** — `node_modules/@oahl/server/dist/index.js` relative to the current working directory. This is the standard path when the packages are installed separately.
+
+If neither path exists, the command prints:
+
+```
+❌ Error: Server build not found. Please run "npm run build" first.
+```
+
+## Environment variables passed to the server
+
+The following environment variables are set before the server process is loaded:
+
+| Variable | Value |
+|---|---|
+| `PORT` | Value of `--port` option |
+| `OAHL_OWNER_EMAIL` | Authenticated email address |
+| `OAHL_OWNER_PIN` | Authenticated 6-digit PIN |
+
+## Expected startup output
+
+```
+🚀 Starting OAHL Node...
+✅ Node registered with Cloud Registry
+✅ Adapter @oahl/adapter-usb-camera initialized
+🌐 Listening on http://localhost:3000
+```
+
+The exact output is produced by `@oahl/server`. The lines above are representative of a healthy startup.
+
+<Tip>
+  To run the node as a background service, wrap it with a process manager such as `pm2` or a systemd unit file. See the [Docker deployment guide](/hardware-owners/docker-deployment) for a containerized alternative.
+</Tip>

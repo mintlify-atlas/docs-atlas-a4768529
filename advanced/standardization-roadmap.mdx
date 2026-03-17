@@ -1,0 +1,208 @@
+---
+title: "Standardization roadmap"
+description: "How OAHL progresses from a strong protocol foundation to ecosystem-level standard maturity, with milestones, acceptance criteria, and how to contribute."
+keywords: ["roadmap", "standardization", "conformance", "governance", "RFC", "MCP", "milestones"]
+---
+
+This roadmap defines how OAHL progresses from its current protocol foundation to ecosystem-level standard maturity, targeting MCP-like interoperability for hardware.
+
+## Goal
+
+Reach MCP-level maturity for hardware interoperability by combining:
+
+- Stable protocol contracts
+- Conformance validation
+- Reusable transport ecosystem
+- Security trust model
+- Governance and versioning discipline
+
+**Target score for MCP-level maturity:** ≥ 85/100 across the [suggested scorecard](#suggested-scorecard) with no critical gaps.
+
+---
+
+## Current baseline
+
+OAHL already has a solid foundation:
+
+<CardGroup cols={2}>
+  <Card title="Protocol draft" icon="file-text">
+    `docs/oahl-protocol-v1.md` — Stable (v1.0)
+  </Card>
+  <Card title="Execution result schema" icon="braces">
+    `oahl-execution-result.schema.json` — Canonical structured response envelope
+  </Card>
+  <Card title="Attachment profile schema" icon="plug">
+    `oahl-attachment-profile.schema.json` — Standard transport descriptor
+  </Card>
+  <Card title="Transport architecture" icon="network">
+    Transport plugin architecture and attachment profile drafts complete
+  </Card>
+</CardGroup>
+
+**Estimated maturity:** Foundation complete, ecosystem incomplete.
+
+---
+
+## Roadmap phases
+
+<Steps>
+  <Step title="Phase 1 — Protocol stabilization (v1.0)">
+    **Deliverables:**
+    - Freeze OAHL Protocol v1 required fields and status semantics
+    - Freeze execution result schema at `schema_version: 1.0`
+    - Freeze attachment profile schema for required fields
+    - Publish the explicit error-code catalog
+
+    **Acceptance criteria:**
+    - No breaking changes to v1 required fields across two consecutive releases
+    - OpenAPI and protocol docs are fully aligned for all v1 endpoints
+    - All first-party adapters return standardized execution envelopes
+
+    **Exit gate:** Protocol docs marked as `Stable` (not `Draft`).
+  </Step>
+
+  <Step title="Phase 2 — Conformance program">
+    **Deliverables:**
+    - Conformance test suite (CLI + CI runnable) covering:
+      - Capability schema validation behavior
+      - Session exclusivity and cleanup
+      - Deterministic reservation behavior
+      - Execution envelope validity
+    - Certification profile levels: `Core-Compliant`, `Transport-Compliant`, `Security-Compliant`
+    - Machine-readable conformance report output
+
+    **Acceptance criteria:**
+    - Every first-party package passes conformance in CI
+    - Third-party adapter authors can run tests locally via one command
+
+    **Exit gate:** Conformance badge available for adapters and nodes.
+  </Step>
+
+  <Step title="Phase 3 — Transport plugin ecosystem">
+    **Deliverables:**
+    - First-party transport plugins (reference set):
+      - `transport-serial`
+      - `transport-adb`
+      - `transport-mqtt`
+      - `transport-ble`
+      - `transport-tcp`
+    - Transport selection policy in the server runtime
+    - Fallback strategy policy with explicit downgrade rules
+
+    **Acceptance criteria:**
+    - At least 3 transport plugins are production-tested
+    - Adapter examples demonstrate composable transport usage
+    - Transport error codes are standardized
+
+    **Exit gate:** Transport plugins are reusable building blocks, not adapter-local one-offs.
+  </Step>
+
+  <Step title="Phase 4 — Security, trust, and attestation">
+    **Deliverables:**
+    - Node identity profile (signed node metadata)
+    - Device trust metadata (attested vs self-declared)
+    - Key rotation policy and token scoping model
+    - Security event audit schema
+
+    **Acceptance criteria:**
+    - Provider auth and agent auth separation enforced everywhere
+    - High-trust mode available for sensitive capabilities
+    - Audit records are machine-parseable and queryable
+
+    **Exit gate:** Security profile published with mandatory controls for production deployments.
+  </Step>
+
+  <Step title="Phase 5 — SDK and developer experience parity">
+    **Deliverables:**
+    - SDK parity matrix (JavaScript and Python) for node and cloud clients
+    - Generated types from OpenAPI/schemas where possible
+    - One-command adapter scaffold and one-command conformance validation
+
+    **Acceptance criteria:**
+    - JS and Python SDKs support equivalent cloud lifecycle operations
+    - Adapter scaffold emits a transport-aware structure by default
+
+    **Exit gate:** New adapter developers can ship a compliant adapter with minimal custom boilerplate.
+  </Step>
+
+  <Step title="Phase 6 — Governance and compatibility policy">
+    **Deliverables:**
+    - Versioning policy for protocol and schema changes
+    - Deprecation windows and migration guides
+    - RFC process for protocol evolution
+    - Reference implementation changelog tied to protocol changes
+
+    **Acceptance criteria:**
+    - Breaking changes require an RFC and a major version bump
+    - Deprecation notices include machine-readable metadata and sunset dates
+
+    **Exit gate:** The external ecosystem can plan upgrades predictably.
+  </Step>
+</Steps>
+
+---
+
+## Suggested scorecard
+
+Track progress monthly using weighted dimensions:
+
+| Dimension | Weight |
+|---|---|
+| Protocol stability | 20% |
+| Conformance coverage | 20% |
+| Transport ecosystem coverage | 20% |
+| Security/trust maturity | 20% |
+| SDK/developer experience parity | 10% |
+| Governance maturity | 10% |
+
+---
+
+## Immediate next 30 days
+
+1. Finalize the v1 error code catalog.
+2. Build the first conformance test runner.
+3. Ship the first reference transport plugin (`transport-adb` or `transport-serial`).
+4. Add a CI gate requiring execution envelope compliance.
+5. Publish a compatibility policy draft.
+
+---
+
+## How to contribute
+
+<AccordionGroup>
+  <Accordion title="Edit documentation directly on GitHub">
+    Navigate to the page you want to edit, click the pencil icon, make your changes, and submit a pull request. This is the fastest way to fix typos, clarify wording, or add missing examples.
+  </Accordion>
+
+  <Accordion title="Contribute via local development">
+    1. Fork and clone the repository.
+    2. Install the Mintlify CLI: `npm i -g mint`
+    3. Create a branch for your changes.
+    4. Run `mint dev` from the `docs/` directory to preview at `http://localhost:3000`.
+    5. Submit a pull request with a clear description of your change.
+  </Accordion>
+
+  <Accordion title="Propose a protocol change (RFC process)">
+    A formal RFC process is planned as part of Phase 6. Until it is established, open a GitHub issue with the `RFC` label and describe:
+
+    - The problem you are solving
+    - The proposed change to the protocol or schema
+    - Any backward-compatibility impact
+    - Whether a major version bump would be required
+
+    Breaking changes to required fields require a new major protocol version. New optional fields are allowed as backward-compatible extensions under the current version.
+  </Accordion>
+
+  <Accordion title="Write or improve a conformance test">
+    The conformance test suite is under development (Phase 2). Watch the repository for issues tagged `conformance` to contribute test cases for:
+
+    - Capability schema validation
+    - Session exclusivity
+    - Deterministic reservation
+    - Execution envelope validity
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  See [CONTRIBUTING.md](https://github.com/fredabila/oahl/blob/main/CONTRIBUTING.md) for full writing guidelines, branch conventions, and the pull request process.
+</Note>

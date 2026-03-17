@@ -1,0 +1,109 @@
+---
+title: 'Register node'
+description: 'Register or heartbeat a hardware node with the cloud registry using POST /v1/provider/nodes/register.'
+---
+
+## `POST /v1/provider/nodes/register`
+
+Called by a local OAHL node on startup and periodically to announce its available devices and capabilities to the cloud registry.
+
+**Heartbeat behavior:**
+- The default heartbeat interval is **15 seconds**.
+- Node records expire after **300 seconds** (5 minutes) if not refreshed.
+- Calling this endpoint with the same `node_id` updates the existing record rather than creating a duplicate.
+
+<Note>
+  This endpoint requires a **provider API key**, not an agent API key.
+</Note>
+
+### Request body
+
+<ParamField body="node_id" type="string" required>
+  Unique, stable identifier for this hardware node.
+</ParamField>
+
+<ParamField body="owner_id" type="string">
+  Identifier of the node owner (used for access policy enforcement).
+</ParamField>
+
+<ParamField body="owner_email" type="string">
+  Email address of the node owner.
+</ParamField>
+
+<ParamField body="provider" type="object">
+  Provider metadata.
+  <Expandable title="provider properties">
+    <ParamField body="name" type="string">
+      Human-readable provider name (e.g. `acme-labs`).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="devices" type="DeviceDescriptor[]">
+  Array of devices attached to this node. Each device follows the [DeviceDescriptor](/api-reference/capabilities#devicedescriptor-schema) schema. Replaces the previous device list for this node on every call.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Always `success` on a successful registration or heartbeat.
+</ResponseField>
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `400` | `node_id` is missing from the request body |
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://oahl.onrender.com/v1/provider/nodes/register \
+  -H "Authorization: Bearer <provider_api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": "node-abc",
+    "owner_id": "user-001",
+    "owner_email": "operator@example.com",
+    "provider": { "name": "acme-labs" },
+    "devices": [
+      {
+        "id": "cam-01",
+        "type": "camera",
+        "name": "Front Door Camera",
+        "node_id": "node-abc",
+        "status": "available",
+        "capabilities": [
+          {
+            "name": "camera.capture",
+            "description": "Capture a still image.",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "resolution": { "type": "string", "enum": ["720p", "1080p"] }
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "status": "success"
+}
+```
+
+```json 400
+{
+  "error": "node_id is required"
+}
+```
+
+</ResponseExample>

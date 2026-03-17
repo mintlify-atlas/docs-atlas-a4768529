@@ -1,0 +1,137 @@
+---
+title: "oahl scan-ports"
+description: "Scan connected USB and serial devices and get adapter suggestions with config snippets."
+---
+
+The `scan-ports` command detects USB and serial devices connected to the host and prints adapter recommendations, capability hints, and ready-to-paste config snippets for each detected device.
+
+```bash
+oahl scan-ports
+```
+
+## Options
+
+<ParamField path="--json" type="boolean" default="false">
+  Output scan results as machine-readable JSON instead of the human-readable format.
+
+  ```bash
+  oahl scan-ports --json
+  ```
+</ParamField>
+
+## How scanning works
+
+The command runs two scans in sequence and combines the results:
+
+1. **USB scan** — detects USB devices
+2. **Serial scan** — detects serial port devices
+
+The underlying system commands differ by platform:
+
+<Tabs>
+  <Tab title="Linux">
+    **USB:** `lsusb`
+
+    **Serial:** `ls /dev/ttyUSB* /dev/ttyACM*`
+  </Tab>
+  <Tab title="macOS">
+    **USB:** `system_profiler SPUSBDataType -json`
+
+    **Serial:** `ls /dev/tty.* /dev/cu.*`
+  </Tab>
+  <Tab title="Windows">
+    **USB:** `Get-PnpDevice -PresentOnly | Where-Object { $_.InstanceId -like "USB*" }` (PowerShell)
+
+    **Serial:** `[System.IO.Ports.SerialPort]::GetPortNames()` (PowerShell)
+  </Tab>
+</Tabs>
+
+## Adapter classification
+
+For each detected device, the CLI inspects the device name, vendor, and class name (case-insensitive) and assigns a suggested adapter:
+
+| Device signal | Suggested adapter | Type | Capability hints |
+|---|---|---|---|
+| Contains `android` or `adb` | `@oahl/adapter-android` | `mobile` | `system.info`, `screen.screenshot`, `system.shell` |
+| Contains `camera`, `video`, or `webcam` | `@oahl/adapter-usb-camera` | `camera` | `camera.capture` |
+| Contains `rtl`, `sdr`, or `radio` | `@oahl/adapter-rtl-sdr` | `sdr` | `tune`, `read_samples` |
+| Serial port (no other match) | `@oahl/adapter-custom` | `serial-device` | `device.read`, `device.write` |
+| No match | `@oahl/adapter-custom` | `custom` | `hardware.baseline` |
+
+## Example output
+
+```
+🔎 Scanning connected ports/devices...
+✅ Detected 2 device(s):
+
+1. [USB] Bus 001 Device 004: ID 046d:0825 Logitech, Inc. Webcam C270
+   id: Bus 001 Device 004: ID 046d:0825 Logitech, Inc. Webcam C270
+   status: present
+   suggested adapter: @oahl/adapter-usb-camera
+   suggested type: camera
+   capability hints: camera.capture
+   config snippet:
+   {"id":"detected-1","type":"camera","adapter":"usb-camera","capabilities":["camera.capture"]}
+
+2. [SERIAL] /dev/ttyUSB0
+   id: /dev/ttyUSB0
+   status: present
+   suggested adapter: @oahl/adapter-custom
+   suggested type: serial-device
+   capability hints: device.read, device.write
+   config snippet:
+   {"id":"detected-2","type":"serial-device","adapter":"custom","capabilities":["device.read","device.write"]}
+
+🧭 Adapter creation flow:
+1) Use existing suggested adapter where possible.
+2) For unknown hardware, scaffold one: oahl create-adapter <name>.
+3) Add hardware.baseline capability for fallback intent handling.
+4) Install plugin: oahl install @oahl/adapter-<name>.
+5) Import devices in TUI: oahl tui -> Import detected devices.
+```
+
+## JSON output
+
+When `--json` is passed, the command prints a single JSON object and exits:
+
+```json
+{
+  "timestamp": 1700000000000,
+  "devices": [
+    {
+      "portType": "usb",
+      "id": "Bus 001 Device 004: ID 046d:0825 Logitech, Inc. Webcam C270",
+      "name": "Bus 001 Device 004: ID 046d:0825 Logitech, Inc. Webcam C270",
+      "status": "present"
+    },
+    {
+      "portType": "serial",
+      "id": "/dev/ttyUSB0",
+      "name": "/dev/ttyUSB0",
+      "status": "present"
+    }
+  ]
+}
+```
+
+<Note>
+  The JSON output contains the raw scan records only. Adapter classification (suggested adapter, type, capability hints, config snippets) is not included in the JSON output.
+</Note>
+
+## No devices found
+
+If no USB or serial devices are detected:
+
+```
+⚠️ No USB/serial devices detected.
+Tip: reconnect the device and run `oahl scan-ports` again.
+```
+
+## Next steps
+
+After scanning:
+
+1. Copy the config snippet for a detected device into your `oahl-config.json` `devices` array.
+2. Install the suggested adapter: `oahl install @oahl/adapter-usb-camera`.
+3. For hardware with no ready-made adapter, scaffold one: `oahl create-adapter <name>`.
+4. Use `oahl tui` → **Import detected devices from plugins** to auto-populate devices from installed adapters.

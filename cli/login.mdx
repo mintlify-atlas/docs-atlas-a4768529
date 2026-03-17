@@ -1,0 +1,96 @@
+---
+title: "oahl login / logout"
+description: "Authenticate this machine against the OAHL Developer Portal."
+---
+
+## oahl login
+
+Links this machine to your OAHL Developer Portal account. Credentials are stored in `.oahl-session.json` in the current directory so that subsequent commands (`oahl start`, `oahl init`) do not prompt again.
+
+```bash
+oahl login
+```
+
+### Prompts
+
+```
+🔐 Provider Authentication Required
+Enter your Developer Portal credentials to link this node to your account.
+
+? Email Address › you@example.com
+? 6-Digit PIN › ******
+? Remember these credentials on this machine? › Yes
+✅ Credentials saved to .oahl-session.json
+
+✨ Successfully logged in as you@example.com
+```
+
+<ParamField path="Email Address" type="string" required>
+  The email address registered with your OAHL Developer Portal account. Must contain `@`.
+</ParamField>
+
+<ParamField path="6-Digit PIN" type="string" required>
+  Exactly six numeric digits. Validated as `/^\d{6}$/`.
+</ParamField>
+
+<ParamField path="Remember these credentials on this machine?" type="boolean" default="true">
+  When `Yes`, the email and PIN are written to `.oahl-session.json`. When `No`, the session is used for the current command only and no file is written.
+</ParamField>
+
+### Session file format
+
+When credentials are saved, the following JSON is written to `.oahl-session.json`:
+
+```json .oahl-session.json
+{
+  "email": "you@example.com",
+  "pin": "123456"
+}
+```
+
+### Cancelling login
+
+If you press `Ctrl+C` or leave a required field empty, the command exits without saving:
+
+```
+❌ Login cancelled.
+```
+
+---
+
+## oahl logout
+
+Removes the saved `.oahl-session.json` file from the current directory.
+
+```bash
+oahl logout
+```
+
+```
+👋 Logged out. Credentials removed.
+```
+
+If no session file exists:
+
+```
+ℹ️ No active session found.
+```
+
+---
+
+## Security
+
+<Warning>
+  `.oahl-session.json` stores your PIN in plain text. Add it to `.gitignore` to prevent it from being committed to version control.
+
+  ```
+  # .gitignore
+  .oahl-session.json
+  ```
+</Warning>
+
+The session file is scoped to the current working directory. Different project directories maintain independent sessions.
+
+<Tip>
+  On shared machines or CI systems, skip saving the session file by answering `No` to the "Remember these credentials" prompt, or set credentials as environment variables consumed by your deployment scripts.
+</Tip>

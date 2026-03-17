@@ -1,0 +1,211 @@
+---
+title: 'Execute capability'
+description: 'Run a single capability within an active session with POST /v1/sessions/{session_id}/execute.'
+---
+
+## `POST /v1/sessions/{session_id}/execute`
+
+Relays a capability execution command to the hardware node and waits for the result. The relay transport is transparent to the caller — the cloud prefers a WebSocket fast-path and falls back to HTTP long-polling automatically. The response headers indicate which path was used.
+
+### Path parameters
+
+<ParamField path="session_id" type="string" required>
+  Opaque session identifier returned by `POST /v1/requests`.
+</ParamField>
+
+### Request body
+
+<ParamField body="capability" type="string" required>
+  The capability to execute (e.g. `camera.capture`).
+</ParamField>
+
+<ParamField body="params" type="object">
+  Arguments for the capability, validated against the capability's JSON Schema. Omit or pass `{}` for capabilities that take no parameters.
+</ParamField>
+
+<ParamField body="timeout_ms" type="integer">
+  Override the default relay timeout in milliseconds. If the node does not respond within this window, the server returns `504`.
+</ParamField>
+
+### Response headers
+
+| Header | Values | Description |
+|---|---|---|
+| `x-oahl-relay-mode` | `websocket`, `websocket-late`, `polling` | Transport path used to deliver the command and collect the result |
+| `x-oahl-request-id` | string | Unique ID for this relay operation |
+
+#### Relay modes
+
+| Mode | Meaning |
+|---|---|
+| `websocket` | Result received over an active WebSocket connection before the HTTP response was written |
+| `websocket-late` | WebSocket result arrived after the polling fallback had already been initiated |
+| `polling` | Result collected via HTTP long-poll (WebSocket was unavailable) |
+| `websocket-timeout` | *(504 only)* WebSocket was available but the node did not respond in time |
+| `polling-timeout` | *(504 only)* Polling fallback timed out with no result |
+
+### Response body — ExecutionResult
+
+<ResponseField name="schema_version" type="string" required>
+  Always `"1.0"`.
+</ResponseField>
+
+<ResponseField name="operation_id" type="string" required>
+  Unique ID for this execution operation, assigned by the cloud relay (e.g. `cmd-3a7f92bc-1234`).
+</ResponseField>
+
+<ResponseField name="status" type="string" required>
+  One of `accepted`, `in_progress`, `success`, or `error`.
+</ResponseField>
+
+<ResponseField name="completion" type="object" required>
+  Progress state of the operation.
+  <Expandable title="completion properties">
+    <ResponseField name="done" type="boolean" required>
+      `true` when the operation has finished (either `completed` or `failed`).
+    </ResponseField>
+    <ResponseField name="state" type="string" required>
+      One of `queued`, `in_progress`, `completed`, or `failed`.
+    </ResponseField>
+    <ResponseField name="progress_pct" type="number">
+      Completion percentage (0–100). Present for long-running operations.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="capability" type="string" required>
+  The capability that was executed (e.g. `camera.capture`).
+</ResponseField>
+
+<ResponseField name="device_id" type="string" required>
+  ID of the device that executed the capability.
+</ResponseField>
+
+<ResponseField name="timestamp" type="string" required>
+  ISO 8601 datetime of when the result was produced.
+</ResponseField>
+
+<ResponseField name="data" type="any">
+  Capability-specific structured payload. Shape varies by capability. `null` on error.
+</ResponseField>
+
+<ResponseField name="error" type="object">
+  Present when `status` is `error`. `null` otherwise.
+  <Expandable title="error properties">
+    <ResponseField name="code" type="string" required>
+      Machine-readable error code (e.g. `EXECUTION_FAILED`).
+    </ResponseField>
+    <ResponseField name="message" type="string" required>
+      Human-readable error description.
+    </ResponseField>
+    <ResponseField name="retryable" type="boolean">
+      Whether the calling agent may safely retry the operation.
+    </ResponseField>
+    <ResponseField name="agent_recovery_hints" type="string[]">
+      Natural-language recovery suggestions for autonomous agents (e.g. `"Call camera.reset to clear the fault"`).
+    </ResponseField>
+    <ResponseField name="details" type="any">
+      Additional structured error context. May be `null`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="meta" type="object">
+  Optional relay and adapter metadata.
+  <Expandable title="meta properties">
+    <ResponseField name="adapter_id" type="string">
+      ID of the adapter that handled the execution.
+    </ResponseField>
+    <ResponseField name="relay_latency_ms" type="number">
+      Time in milliseconds between command dispatch and result receipt at the cloud layer.
+    </ResponseField>
+    <ResponseField name="node_id" type="string">
+      ID of the node that executed the command.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `404` | Session not found or expired |
+| `504` | Hardware node did not respond within the timeout window |
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://oahl.onrender.com/v1/sessions/sess-3f7a2c1d-e8b5-4f12-a903-7d1c2e3f4a5b/execute \
+  -H "Authorization: Bearer <agent_api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "capability": "camera.capture",
+    "params": { "resolution": "1080p" },
+    "timeout_ms": 30000
+  }'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-3a7f92bc-1234",
+  "status": "success",
+  "completion": {
+    "done": true,
+    "state": "completed"
+  },
+  "capability": "camera.capture",
+  "device_id": "cam-01",
+  "timestamp": "2026-03-15T12:00:00.000Z",
+  "data": {
+    "image_url": "https://storage.example.com/captures/img-001.jpg",
+    "width": 1920,
+    "height": 1080
+  },
+  "error": null,
+  "meta": {
+    "adapter_id": "camera-adapter-v2",
+    "relay_latency_ms": 142,
+    "node_id": "node-abc"
+  }
+}
+```
+
+```json 200 — error result
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-5b8e01af-5678",
+  "status": "error",
+  "completion": {
+    "done": true,
+    "state": "failed"
+  },
+  "capability": "camera.capture",
+  "device_id": "cam-01",
+  "timestamp": "2026-03-15T12:01:00.000Z",
+  "data": null,
+  "error": {
+    "code": "EXECUTION_FAILED",
+    "message": "Camera lens cover is closed",
+    "retryable": true,
+    "agent_recovery_hints": [
+      "Open the lens cover before capturing",
+      "Call camera.reset to clear the fault"
+    ],
+    "details": null
+  },
+  "meta": { "relay_latency_ms": 98 }
+}
+```
+
+```json 504
+{
+  "error": "Hardware node did not respond within the timeout window"
+}
+```
+
+</ResponseExample>

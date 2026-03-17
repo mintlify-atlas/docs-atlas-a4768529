@@ -1,0 +1,183 @@
+---
+title: "oahl conformance"
+description: "Run OAHL conformance checks against an adapter or the internal platform test suite."
+---
+
+The `conformance` command verifies that an adapter implementation meets OAHL protocol requirements, or runs the platform-level conformance suite against the core packages.
+
+```bash
+# Run internal platform conformance
+oahl conformance
+
+# Run adapter conformance
+oahl conformance ./path/to/adapter/dist/index.js
+```
+
+## Arguments
+
+<ParamField path="adapter" type="string">
+  Path to the compiled adapter module (e.g. `./adapter-my-sensor/dist/index.js`). When omitted, the command runs internal platform conformance instead of adapter conformance.
+</ParamField>
+
+## Options
+
+<ParamField path="--workspace" type="string" default="process.cwd()">
+  Path to the OAHL workspace root. Only used when running internal platform conformance (no adapter argument). Defaults to the current working directory.
+
+  ```bash
+  oahl conformance --workspace /path/to/oahl
+  ```
+</ParamField>
+
+## Modes
+
+### Internal platform conformance
+
+When called without an adapter argument, the command runs:
+
+```bash
+npm run test:conformance --workspace=@oahl/core
+```
+
+from the resolved workspace root. This validates the core OAHL platform itself.
+
+```
+🧪 Running OAHL internal platform conformance from: /your/workspace
+
+✅ Internal conformance checks passed.
+```
+
+If the test suite fails:
+
+```
+❌ Internal conformance checks failed: Command failed: npm run test:conformance
+```
+
+The process exits with code `1`.
+
+### Adapter conformance
+
+When an adapter path is provided, the command loads the module and runs four conformance checks against it.
+
+```
+🧪 OAHL Adapter Conformance Suite
+=================================
+Target: ./adapter-my-sensor/dist/index.js
+```
+
+## Conformance checks
+
+### 1. Module loading & interface implementation
+
+Verifies that the module exports a constructable class and that the instance implements the required `Adapter` interface methods.
+
+**Requirements:**
+- Module must export a constructable class (default export, named export, or the module itself).
+- Instance must have `getDevices` and `execute` as functions.
+- `initialize()` is called if present; errors are reported but do not fail this check.
+
+**Pass:**
+```
+  ✅ Adapter class instantiated and implements required core interface.
+```
+
+**Fail (fatal):** If the module cannot be loaded or the class cannot be instantiated, all subsequent checks are skipped and the suite returns `false` immediately.
+
+### 2. Device discovery
+
+Calls `getDevices()` and validates the returned array.
+
+**Requirements:**
+- Must return an array.
+- Every device must have a non-empty string `id`.
+- Every device must have a non-empty string `type`.
+
+**Pass:**
+```
+  ✅ Returned 2 properly-formatted devices.
+```
+
+**Warning (non-fatal):**
+```
+  ⚠️ Adapter returned 0 devices. Subsequent tests will be limited.
+```
+
+### 3. Capability descriptors
+
+Calls `getCapabilities(deviceId)` for every discovered device and validates each returned capability.
+
+**Requirements:**
+- Must return an array.
+- Every capability must have a non-empty string `name`.
+- Capability names must match the dot-notation format: `^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)(\.[a-z0-9_]+)*$` (e.g. `camera.capture`, `radio.measure_power`).
+- Every capability must have a `schema` object (JSON Schema).
+
+**Pass:**
+```
+  ✅ All 3 declared capabilities meet schema and naming conformance.
+```
+
+**Fail:**
+```
+  ❌ Capability name "CameraCapture" violates dot-notation format requirements.
+```
+
+### 4. Execution envelope structure
+
+Calls `execute(deviceId, capabilityName, {})` using the first capability from the first device, then validates the return value against the OAHL Protocol v1 envelope schema.
+
+**Requirements:**
+- Must return an object (not throw).
+- Must include `schema_version`.
+- Must include `operation_id`.
+- `status` must be `"success"` or `"error"`.
+- Must include `completion.done` as a boolean.
+- If `status` is `"error"`, must include `error.code`.
+
+**Pass:**
+```
+  ✅ Execution envelope structure meets OAHL Protocol v1 requirements.
+```
+
+**Fail:**
+```
+  ❌ Missing 'schema_version' in result envelope.
+```
+
+<Warning>
+  If the adapter throws an uncaught JavaScript `Error` instead of returning a canonical envelope object, check 4 fails. Adapters must always return a structured result, even when reporting errors.
+</Warning>
+
+## Full passing output
+
+```
+🧪 OAHL Adapter Conformance Suite
+=================================
+Target: ./adapter-my-sensor/dist/index.js
+
+1. Module Loading & Interface Implementation
+  ✅ Adapter class instantiated and implements required core interface.
+
+2. Device Discovery (getDevices)
+  ✅ Returned 1 properly-formatted devices.
+
+3. Capability Descriptors (getCapabilities)
+  ✅ All 1 declared capabilities meet schema and naming conformance.
+
+4. Execution Envelope Structure (execute)
+  ✅ Execution envelope structure meets OAHL Protocol v1 requirements.
+
+=================================
+🏆 CONFORMANCE PASSED: Adapter meets OAHL ecosystem standards.
+```
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | All checks passed |
+| `1` | One or more checks failed |
+
+<Tip>
+  Run conformance checks as part of your adapter's CI pipeline to catch regressions before publishing. The command exits with code `1` on failure, making it suitable for use in `npm test` scripts.
+</Tip>

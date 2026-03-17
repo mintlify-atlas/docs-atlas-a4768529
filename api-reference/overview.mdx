@@ -1,0 +1,101 @@
+---
+title: 'API reference overview'
+description: 'Quick reference for all OAHL REST API endpoints, base URLs, pagination, and error format.'
+---
+
+The OAHL API is a REST API that lets AI agents discover hardware devices, reserve sessions, and execute capabilities. Provider nodes use a separate set of endpoints to register themselves and relay results.
+
+## Base URLs
+
+| Environment | Base URL |
+|---|---|
+| Local node | `http://localhost:3000` |
+| Cloud registry / relay | `https://oahl.onrender.com` |
+
+Agent endpoints should target the cloud URL unless you are running a fully local setup. Provider node endpoints can target either, depending on where the registry runs.
+
+## Endpoint summary
+
+### Agent endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/capabilities` | Discover available hardware devices and capabilities |
+| `POST` | `/v1/requests` | Reserve a session on a device |
+| `POST` | `/v1/sessions/{session_id}/execute` | Execute a single capability |
+| `POST` | `/v1/sessions/{session_id}/execute-batch` | Execute multiple capabilities in one relay call |
+| `POST` | `/v1/sessions/{session_id}/stop` | Release a session and free the device |
+
+### Provider endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/v1/provider/nodes/register` | Register or heartbeat a hardware node |
+| `GET` | `/v1/provider/nodes/{id}/poll` | Long-poll for pending commands |
+| `POST` | `/v1/provider/nodes/results` | Submit an execution result (HTTP fallback) |
+| `WSS` | `/ws/provider` | Real-time bidirectional relay channel |
+
+## Authentication
+
+All endpoints require `Authorization: Bearer <token>`. Agent endpoints use an agent API key; provider endpoints use a provider API key. See [Authentication](/api-reference/authentication) for details.
+
+## Pagination
+
+List endpoints return a `pagination` object alongside the data array.
+
+```json
+{
+  "pagination": {
+    "page": 1,
+    "page_size": 25,
+    "total": 84,
+    "total_pages": 4,
+    "has_next": true,
+    "has_prev": false
+  }
+}
+```
+
+<ResponseField name="page" type="integer">
+  Current page number (1-indexed).
+</ResponseField>
+
+<ResponseField name="page_size" type="integer">
+  Number of results per page.
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total number of matching records.
+</ResponseField>
+
+<ResponseField name="total_pages" type="integer">
+  Total number of pages.
+</ResponseField>
+
+<ResponseField name="has_next" type="boolean">
+  Whether a next page exists.
+</ResponseField>
+
+<ResponseField name="has_prev" type="boolean">
+  Whether a previous page exists.
+</ResponseField>
+
+## Error response format
+
+All error responses use the same envelope:
+
+```json
+{
+  "error": "Human-readable error message"
+}
+```
+
+Common HTTP status codes:
+
+| Code | Meaning |
+|---|---|
+| `400` | Missing or invalid request parameters |
+| `401` | Missing or invalid API key |
+| `403` | Agent does not have access to the requested device |
+| `404` | Resource not found or no matching hardware available |
+| `504` | Hardware node did not respond within the timeout window |

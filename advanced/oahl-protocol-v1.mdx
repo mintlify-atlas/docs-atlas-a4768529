@@ -1,0 +1,312 @@
+---
+title: "OAHL Protocol v1"
+description: "System-level specification for the OAHL protocol: message formats, session lifecycle, execution result envelope, relay modes, and conformance targets."
+keywords: ["OAHL", "protocol", "v1", "specification", "execution result", "session", "relay", "websocket"]
+---
+
+OAHL Protocol v1 defines the hardware-agnostic contract that any device type and transport can implement against one standard. Status: **Stable (v1.0)** — suitable for external review.
+
+## Scope
+
+OAHL Protocol v1 standardizes:
+
+- Capability discovery and filtering
+- Access control and agent identity
+- Session allocation and exclusivity
+- Capability execution (single and batch)
+- Structured execution result envelope
+- Session release
+- Node registration and cloud relay channel
+- W3C WoT semantic alignment fields
+
+The protocol is transport-agnostic and adapter-agnostic.
+
+---
+
+## Core API lifecycle
+
+<Steps>
+  <Step title="Discover capabilities">
+    Call `GET /v1/capabilities` to list all devices and their capabilities across registered nodes. Use query parameters to filter by device type, provider, or capability name.
+  </Step>
+  <Step title="Reserve a session">
+    Call `POST /v1/requests` with a `device_id` to acquire an exclusive session for the target device. The response returns a `session_id`.
+  </Step>
+  <Step title="Execute capabilities">
+    Call `POST /v1/sessions/{session_id}/execute` with the capability name and validated parameters. Use `POST /v1/sessions/{session_id}/execute-batch` to execute multiple capabilities in a single trip.
+  </Step>
+  <Step title="Release the session">
+    Call `POST /v1/sessions/{session_id}/stop` to release the device. You must stop the session on both the success and failure paths.
+  </Step>
+</Steps>
+
+### Node-to-cloud endpoints (provider-facing)
+
+```text
+POST /v1/provider/nodes/register         — Register or heartbeat a hardware node
+GET  /v1/provider/nodes/{id}/poll        — Long-poll for pending commands (fallback)
+POST /v1/provider/nodes/results          — Deliver an execution result to the cloud
+WS   /ws/provider                        — Real-time bidirectional relay channel
+```
+
+---
+
+## Execution result envelope
+
+All execution results **must** conform to `oahl-execution-result.schema.json`.
+
+### Required fields
+
+Every response envelope must include these seven fields:
+
+```json
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-123",
+  "status": "success",
+  "completion": { "done": true, "state": "completed" },
+  "capability": "robotic_arm.move",
+  "device_id": "arm-01",
+  "timestamp": "2026-03-16T10:00:00.000Z"
+}
+```
+
+### Full schema reference
+
+<AccordionGroup>
+  <Accordion title="status values">
+    | Value | Meaning |
+    |---|---|
+    | `accepted` | Command received, not yet executed |
+    | `in_progress` | Execution is underway |
+    | `success` | Execution completed successfully |
+    | `error` | Execution failed; the `error` object must be present |
+  </Accordion>
+
+  <Accordion title="completion object">
+    The `completion` object is required and contains:
+
+    | Field | Type | Required | Description |
+    |---|---|---|---|
+    | `done` | boolean | Yes | Whether execution has finished |
+    | `state` | string | Yes | One of: `queued`, `in_progress`, `completed`, `failed` |
+    | `progress_pct` | number | No | Progress from 0 to 100 |
+
+    ```json
+    {
+      "done": false,
+      "state": "in_progress",
+      "progress_pct": 42
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="error object">
+    Required when `status` is `error`. Must include `code` and `message`.
+
+    ```json
+    {
+      "code": "MOVE_BLOCKED",
+      "message": "Robotic path is obstructed",
+      "retryable": true,
+      "agent_recovery_hints": ["Clear the path and retry", "Use a lower speed setting"],
+      "details": {}
+    }
+    ```
+
+    | Field | Type | Required |
+    |---|---|---|
+    | `code` | string | Yes |
+    | `message` | string | Yes |
+    | `retryable` | boolean | No |
+    | `agent_recovery_hints` | string[] | No |
+    | `details` | any | No |
+  </Accordion>
+
+  <Accordion title="data and meta fields">
+    - **`data`** — Capability-specific structured payload. Accepts object, array, string, number, boolean, or null.
+    - **`meta`** — Optional object with `duration_ms` (number) and `adapter_id` (string). Additional properties are allowed.
+  </Accordion>
+</AccordionGroup>
+
+### Standard error codes
+
+| Code | Meaning |
+|---|---|
+| `EXECUTION_FAILED` | General adapter execution failure |
+| `ADAPTER_REPORTED_FAILURE` | Adapter returned `success: false` without a structured error |
+| `MOVE_BLOCKED` | Example: robotic path obstruction |
+| `DEVICE_BUSY` | Device has an active exclusive session |
+| `DEVICE_NOT_FOUND` | No adapter can locate the requested device ID |
+| `CAPABILITY_NOT_SUPPORTED` | Adapter does not implement the requested capability |
+| `POLICY_DENIED` | PolicyEngine blocked the capability for this device |
+| `SESSION_NOT_FOUND` | Session ID is invalid or expired |
+| `ACCESS_DENIED` | Agent identity not permitted to access the device |
+| `HARDWARE_TIMEOUT` | Node did not return a result within the allowed window |
+| `SCHEMA_VALIDATION_FAILED` | Request params failed JSON Schema validation |
+| `TRANSPORT_ERROR` | Underlying device transport (serial, ADB, BLE, etc.) failed |
+
+---
+
+## Session semantics
+
+- Session IDs are opaque UUIDs with a `sess-` prefix.
+- Sessions are **exclusive per device** while active. Concurrent requests for the same device are rejected.
+- You must stop sessions after use — on both success and failure paths.
+- Sessions expire automatically after **3600 seconds** of inactivity on the cloud relay.
+- Batch execution (`execute-batch`) operates within a single session and stops on the first error by default.
+
+---
+
+## Access control and agent identity
+
+### Bearer token authentication
+
+All agent-facing cloud endpoints require a bearer token:
+
+```http
+Authorization: Bearer <agent_api_key>
+```
+
+Provider-facing endpoints require a separate `provider_api_key` bearer token. The two key spaces are distinct.
+
+### Optional agent identity headers
+
+For access policy enforcement, agents may supply self-asserted identity headers:
+
+| Header | Type | Description |
+|---|---|---|
+| `x-agent-id` | string | Stable identifier for the calling agent or owner |
+| `x-agent-org-id` | string | Organisation the agent belongs to |
+| `x-agent-roles` | string | Comma-separated role list |
+
+<Warning>
+  These headers are self-asserted and not cryptographically bound to the bearer token in v1. Treat them as advisory trust signals, not verified identity. Cryptographic binding (signed JWT or mTLS) is planned for a future security profile.
+</Warning>
+
+### Device access policy
+
+Each registered device exposes an `access_policy` object:
+
+```json
+{
+  "visibility": "public | shared | private",
+  "allowed_agents": ["agent-id-1"],
+  "allowed_orgs":   ["org-id-1"],
+  "denied_agents":  ["blocked-agent"]
+}
+```
+
+Policy resolution order:
+
+1. If the agent is the device owner (`x-agent-id === owner_id`), access is always granted.
+2. If the agent is on `denied_agents`, access is always rejected (HTTP 403).
+3. If `visibility: public`, any authenticated agent may access the device.
+4. If `visibility: shared`, the agent or their org must appear in `allowed_agents` or `allowed_orgs`.
+5. If `visibility: private`, only the owner has access.
+
+### Discovery filtering
+
+`GET /v1/capabilities` accepts the following query parameters:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `q` | string | Free-text search across device ID, type, provider, and capability names |
+| `type` | string | Filter by device type (e.g. `camera`, `sensor`) |
+| `provider` | string | Filter by provider name |
+| `node_id` | string | Filter to a specific hardware node |
+| `capability` | string | Filter to devices that expose a specific capability |
+| `page` | integer | Page number (default: 1) |
+| `page_size` | integer | Results per page (default: 25, max: 100) |
+
+The response includes a `pagination` object: `{ page, page_size, total, total_pages, has_next, has_prev }`.
+
+---
+
+## Cloud relay channel
+
+The cloud relay supports two execution paths depending on how the hardware node is connected.
+
+<Tabs>
+  <Tab title="WebSocket fast-path">
+    When a node is connected via WebSocket (`/ws/provider`), the cloud forwards `command` or `command-batch` messages directly over the socket and awaits a `result` message.
+
+    - Default fast-path timeout: **10 seconds**
+    - Late-result grace window: **20 seconds**
+
+    Response header `x-oahl-relay-mode` will be one of: `websocket`, `websocket-late`, or `websocket-timeout`.
+  </Tab>
+  <Tab title="HTTP long-poll fallback">
+    If no WebSocket is connected, the cloud enqueues the command in Redis and the node retrieves it via a 30-second long-poll:
+
+    ```http
+    GET /v1/provider/nodes/{id}/poll
+    ```
+
+    The node posts the result back to `POST /v1/provider/nodes/results`. Response header: `x-oahl-relay-mode: polling`.
+  </Tab>
+</Tabs>
+
+### Relay response headers
+
+| Header | Possible values |
+|---|---|
+| `x-oahl-relay-mode` | `websocket`, `websocket-late`, `websocket-timeout`, `polling`, `polling-timeout` |
+| `x-oahl-request-id` | The internal `cmd-*` or `batch-*` request ID |
+
+If neither relay path returns a result within the timeout window, the cloud responds with **HTTP 504**.
+
+---
+
+## Device and capability identity
+
+- Device IDs must be stable within provider scope.
+- Capability names should follow `<domain>.<action>` lowercase dot-notation (e.g. `camera.capture`).
+- Versioning may be done via suffix (e.g. `robotic_arm.move.v2`).
+- Stable domain vocabulary: `camera`, `radio`, `sensor`, `phone`, `robot`, `lab`, `ui`, `file`, `system`, `app`, `input`, `screen`.
+
+---
+
+## Security notes
+
+<Note>
+  The following security controls are on the roadmap and have **not** been implemented in v1:
+
+  - Signed JWT or mTLS agent identity bound to bearer token
+  - Request nonce / HMAC replay protection
+  - Per-node and per-agent rate limiting (HTTP 429)
+  - Formal node attestation profile
+  - Cloud-side JSON Schema validation before forwarding params to the node
+</Note>
+
+- Transport plugins should prefer encrypted transports and must not leak credentials in logs or payloads.
+- No rate limiting is enforced at the cloud layer in v1. Apply external rate limiting for production deployments.
+
+---
+
+## Conformance targets
+
+A compliant OAHL implementation must pass tests for:
+
+<CardGroup cols={2}>
+  <Card title="Capability schema enforcement" icon="file-check">
+    Every adapter exposes a JSON Schema for each capability.
+  </Card>
+  <Card title="Session exclusivity" icon="lock">
+    Concurrent session requests for the same device are rejected.
+  </Card>
+  <Card title="Deterministic reservation" icon="crosshair">
+    Reservation with an explicit `device_id` always targets the correct device.
+  </Card>
+  <Card title="Execution result envelope" icon="package">
+    All required fields are present and correctly typed in every response.
+  </Card>
+  <Card title="Session cleanup" icon="trash-2">
+    The device becomes available again after `stop` is called.
+  </Card>
+  <Card title="Access policy enforcement" icon="shield">
+    Denied agents receive HTTP 403 on every access attempt.
+  </Card>
+</CardGroup>
+
+The conformance test suite is under development. See the [standardization roadmap](/advanced/standardization-roadmap) Phase 2 for planned tooling.

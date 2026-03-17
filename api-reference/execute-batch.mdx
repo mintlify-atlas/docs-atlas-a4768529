@@ -1,0 +1,109 @@
+---
+title: 'Execute batch'
+description: 'Run multiple capabilities sequentially in one relay call with POST /v1/sessions/{session_id}/execute-batch.'
+---
+
+## `POST /v1/sessions/{session_id}/execute-batch`
+
+Sends an ordered list of capability commands to the hardware node in a single relay call. This avoids the round-trip overhead of calling [execute](/api-reference/execute) for each command individually, which is useful for multi-step hardware sequences (e.g. move arm, close gripper, read sensor).
+
+**Batch behavior:**
+- Commands execute sequentially on the node in the order provided.
+- The batch stops on the first error by default.
+- The relay timeout scales with the number of commands in the batch.
+- The response is a single `ExecutionResult` envelope; capability-specific sub-results are returned in the `data` field.
+
+### Path parameters
+
+<ParamField path="session_id" type="string" required>
+  Opaque session identifier returned by `POST /v1/requests`.
+</ParamField>
+
+### Request body
+
+<ParamField body="commands" type="object[]" required>
+  Ordered list of capability execution requests.
+  <Expandable title="command properties">
+    <ParamField body="capability" type="string" required>
+      The capability to execute (e.g. `arm.move`).
+    </ParamField>
+    <ParamField body="params" type="object">
+      Arguments for the capability, validated against the capability's JSON Schema.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="timeout_ms" type="integer">
+  Total timeout for the entire batch in milliseconds. If the node does not complete all commands within this window, the server returns `504`.
+</ParamField>
+
+### Response headers
+
+| Header | Description |
+|---|---|
+| `x-oahl-relay-mode` | Transport path used (same values as [execute](/api-reference/execute#response-headers)) |
+| `x-oahl-request-id` | Unique ID for this relay operation |
+
+### Response body
+
+The response is an [ExecutionResult](/api-reference/execute#response-body-executionresult) envelope. The `data` field contains an array of per-command results.
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `400` | `commands` field missing or not an array |
+| `404` | Session not found |
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://oahl.onrender.com/v1/sessions/sess-3f7a2c1d-e8b5-4f12-a903-7d1c2e3f4a5b/execute-batch \
+  -H "Authorization: Bearer <agent_api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "commands": [
+      { "capability": "arm.move", "params": { "x": 10, "y": 0, "z": 5 } },
+      { "capability": "arm.close_gripper", "params": {} },
+      { "capability": "arm.move", "params": { "x": 0, "y": 0, "z": 0 } }
+    ],
+    "timeout_ms": 120000
+  }'
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-batch-7c3e2a1d-9012",
+  "status": "success",
+  "completion": {
+    "done": true,
+    "state": "completed"
+  },
+  "capability": "batch",
+  "device_id": "arm-01",
+  "timestamp": "2026-03-15T12:05:00.000Z",
+  "data": [
+    { "capability": "arm.move", "status": "success", "data": { "position": { "x": 10, "y": 0, "z": 5 } } },
+    { "capability": "arm.close_gripper", "status": "success", "data": { "grip_force_n": 12.4 } },
+    { "capability": "arm.move", "status": "success", "data": { "position": { "x": 0, "y": 0, "z": 0 } } }
+  ],
+  "error": null,
+  "meta": {
+    "relay_latency_ms": 438,
+    "node_id": "node-abc"
+  }
+}
+```
+
+```json 400
+{
+  "error": "commands must be a non-empty array"
+}
+```
+
+</ResponseExample>

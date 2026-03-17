@@ -1,80 +1,310 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Connect your first hardware device and run a capability in under five minutes."
 ---
 
-## Get started in three steps
+This guide takes you from zero to a running OAHL node. By the end you will have a local node accepting requests and an agent executing a capability against it.
 
-Get your documentation site running locally and make your first customization.
+<Steps>
+  <Step title="Install the CLI">
+    Install the OAHL toolkit globally via npm. This provides the `oahl` command used throughout this guide.
 
-### Step 1: Set up your local environment
+    ```bash
+    npm install -g @fredabila/oahl
+    ```
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    <Note>
+      Node.js 18 or later is required. If you prefer an isolated environment, see the [Docker alternative](#docker-alternative) below.
+    </Note>
+  </Step>
 
-### Step 2: Deploy your changes
+  <Step title="Run the setup wizard">
+    The `oahl init` command launches an interactive wizard that generates your `oahl-config.json`. It asks for a node ID, a provider name, and the type of hardware you are connecting.
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    ```bash
+    oahl init
+    ```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    The wizard prompts you for:
+    - **Email and PIN** — your Developer Portal credentials to link this node to your account
+    - **Node ID** — a unique identifier for this machine (e.g. `my-laptop-01`)
+    - **Provider name** — a human-readable label (e.g. `Accra Test Lab`)
+    - **Device type** — USB Camera, RTL-SDR Radio, Mock/Virtual Sensor, or skip
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    The result is an `oahl-config.json` in the current directory. A minimal generated config looks like this:
 
-### Step 3: Go live
+    ```json oahl-config.json
+    {
+      "node_id": "my-laptop-01",
+      "cloud_url": "https://oahl.onrender.com",
+      "provider_api_key": "123456",
+      "provider": {
+        "name": "My Personal Test Node"
+      },
+      "plugins": [
+        "@oahl/adapter-mock",
+        "@oahl/adapter-usb-camera"
+      ],
+      "baseline_capability": {
+        "enabled": true,
+        "name": "hardware.baseline",
+        "helper_url": "https://example.com/hardware-helper",
+        "template": "Describe action, safety limits, and expected result when direct capability is missing."
+      },
+      "devices": [
+        {
+          "id": "usb-cam-1",
+          "type": "camera",
+          "adapter": "usb-camera",
+          "capabilities": ["camera.capture"],
+          "policy": {
+            "public": false,
+            "max_session_minutes": 30
+          }
+        }
+      ]
+    }
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    <Tip>
+      To scan for connected USB and serial devices before running `init`, use `oahl scan-ports`. It prints adapter suggestions and config snippets you can paste directly into your config.
+    </Tip>
+  </Step>
+
+  <Step title="Start your node">
+    Start the local OAHL daemon. It loads your config, initializes the adapters listed in `plugins`, and connects to the Cloud Registry.
+
+    ```bash
+    oahl start
+    ```
+
+    The node listens on port `3000` by default. To use a different port:
+
+    ```bash
+    oahl start --port 8080
+    ```
+
+    You should see output similar to:
+
+    ```
+    🚀 Starting OAHL Node...
+    ✅ Node registered with Cloud Registry
+    ✅ Adapter @oahl/adapter-usb-camera initialized
+    🌐 Listening on http://localhost:3000
+    ```
+  </Step>
+
+  <Step title="Verify the node is healthy">
+    In a second terminal, confirm the node is running by calling its health endpoint:
+
+    ```bash
+    curl http://localhost:3000/health
+    ```
+
+    A healthy node returns:
+
+    ```json
+    { "status": "ok" }
+    ```
+  </Step>
+
+  <Step title="Discover and execute a capability">
+    Use the official JavaScript SDK to list available devices, start a session, and execute the `camera.capture` capability.
+
+    <Tabs>
+      <Tab title="JavaScript / TypeScript">
+        Install the SDK:
+
+        ```bash
+        npm install @oahl/sdk
+        ```
+
+        Connect to the local node and run a capability:
+
+        ```typescript
+        import { OahlClient } from '@oahl/sdk';
+
+        const client = new OahlClient('http://localhost:3000');
+
+        // 1. Check the node is reachable
+        const health = await client.health();
+        console.log(health); // { status: 'ok' }
+
+        // 2. List devices registered on this node
+        const devices = await client.getDevices();
+        console.log(devices);
+
+        // 3. Start an exclusive session on the first device
+        const session = await client.startSession(devices[0].id);
+        console.log(session.id); // e.g. "sess-abc123"
+
+        // 4. Execute a capability within the session
+        const result = await client.execute(session.id, 'camera.capture', {
+          resolution: '1080p'
+        });
+        console.log(result);
+
+        // 5. Release the device when done
+        await client.stopSession(session.id);
+        ```
+
+        To discover and execute capabilities via the **Cloud Registry** instead of a local node, use `CloudClient`:
+
+        ```typescript
+        import { CloudClient } from '@oahl/sdk';
+
+        const cloud = new CloudClient(
+          'https://oahl.onrender.com',
+          'your-agent-api-key'
+        );
+
+        // Discover all nodes advertising camera.capture
+        const { devices } = await cloud.getCapabilities({ capability: 'camera.capture' });
+
+        // Request a session on the first matching device
+        const { session_id } = await cloud.requestSession({
+          capability: 'camera.capture',
+          node_id: devices[0].node_id
+        });
+
+        // Execute
+        const result = await cloud.execute(session_id, {
+          capability: 'camera.capture',
+          params: { resolution: '720p' }
+        });
+
+        // Stop the session
+        await cloud.stopSession(session_id);
+        ```
+      </Tab>
+      <Tab title="Python">
+        Install the SDK:
+
+        ```bash
+        pip install oahl
+        ```
+
+        Connect to the local node:
+
+        ```python
+        from oahl import OahlClient
+
+        client = OahlClient("http://localhost:3000")
+
+        # List devices
+        devices = client.get_devices()
+
+        # Start a session
+        session = client.start_session(devices[0]['id'])
+
+        # Execute a capability
+        result = client.execute(session['id'], "camera.capture", {"resolution": "1080p"})
+        print(result)
+
+        # Stop the session
+        client.stop_session(session['id'])
+        ```
+
+        To use the **Cloud Registry**:
+
+        ```python
+        from oahl import CloudClient
+
+        cloud = CloudClient(agent_api_key="your-api-key")
+
+        # Query capabilities across the network
+        response = cloud.get_capabilities({"capability": "camera.capture"})
+
+        # Request a session
+        session_req = cloud.request_session({"capability": "camera.capture"})
+        session_id = session_req['session_id']
+
+        # Execute
+        result = cloud.execute(session_id, {
+            "capability": "camera.capture",
+            "params": {"resolution": "720p"}
+        })
+
+        # Stop
+        cloud.stop_session(session_id)
+        ```
+      </Tab>
+      <Tab title="curl">
+        You can interact with the local node using plain HTTP:
+
+        ```bash
+        # List devices
+        curl http://localhost:3000/devices
+
+        # List capabilities for a device
+        curl "http://localhost:3000/capabilities?deviceId=usb-cam-1"
+
+        # Start a session
+        curl -X POST http://localhost:3000/sessions/start \
+          -H 'Content-Type: application/json' \
+          -d '{"deviceId": "usb-cam-1"}'
+
+        # Execute a capability (replace SESSION_ID)
+        curl -X POST http://localhost:3000/execute \
+          -H 'Content-Type: application/json' \
+          -d '{"sessionId": "SESSION_ID", "capabilityName": "camera.capture", "args": {}}'
+
+        # Stop the session
+        curl -X POST http://localhost:3000/sessions/stop \
+          -H 'Content-Type: application/json' \
+          -d '{"sessionId": "SESSION_ID"}'
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+</Steps>
+
+## Docker alternative
+
+If you prefer an isolated container, or if your adapters require native C++ bindings (such as `serialport`), run the node via Docker instead. The Docker image ships with all build tools pre-installed.
+
+```bash
+docker run -d \
+  --name oahl-node \
+  -p 8080:8080 \
+  -v $(pwd)/oahl-config.json:/app/oahl-config.json \
+  --device=/dev/video0 \
+  oahl/node:latest
+```
+
+Replace `--device=/dev/video0` with the device path that matches your hardware. For a USB camera on Linux this is typically `/dev/video0`; for serial devices it may be `/dev/ttyUSB0`.
+
+<Warning>
+  The `--device` flag passes the physical device into the container. Make sure the path matches the device connected to your host before starting the container.
+</Warning>
+
+## Running offline (local-only)
+
+The Cloud Registry is optional. To run a fully private node with no outbound cloud connection, set `cloud_url` to an empty string in `oahl-config.json`:
+
+```json
+{
+  "node_id": "my-local-lab",
+  "cloud_url": "",
+  "devices": []
+}
+```
+
+Local agents connect directly to `http://localhost:3000` over your LAN. Your devices are never broadcast to the internet.
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand how nodes, adapters, sessions, and the cloud relay fit together
+  </Card>
+  <Card title="Hardware owner guide" icon="microchip" href="/hardware-owners/hardware-owner-guide">
+    In-depth guide to connecting and managing hardware devices
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/cli/overview">
+    Full reference for every `oahl` command
+  </Card>
+  <Card title="Security & policies" icon="shield" href="/security/security-guide">
+    Configure access policies, session limits, and agent allow-lists
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

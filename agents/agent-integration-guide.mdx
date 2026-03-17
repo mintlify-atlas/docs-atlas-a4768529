@@ -1,0 +1,293 @@
+---
+title: "Agent integration guide"
+description: "How AI agents discover hardware, request sessions, execute capabilities, and clean up — using the OAHL API, SDKs, or the native MCP server."
+keywords: ["agent", "integration", "session", "execute", "bearer token", "agent identity"]
+---
+
+Agents should not connect directly to a hardware node. Instead, they connect to the OAHL Cloud relay, which handles routing, capability discovery, and delegation to the correct node behind the scenes. For local-only deployments, an agent can target a node directly over the LAN.
+
+## Integration options
+
+<CardGroup cols={3}>
+  <Card title="Direct API" icon="code" href="#direct-api-pattern">
+    Call the OAHL Cloud REST API to discover, reserve, and execute capabilities from any language.
+  </Card>
+  <Card title="SDK" icon="brackets-curly" href="/agents/sdk-javascript">
+    Use the official JavaScript or Python SDK for typed, ergonomic access with session management built in.
+  </Card>
+  <Card title="MCP server" icon="plug" href="/agents/mcp-integration">
+    Expose all OAHL capabilities as MCP tools to Claude Desktop, Cursor, and other MCP-compatible agents — no code required.
+  </Card>
+</CardGroup>
+
+---
+
+## Authentication
+
+All requests to the OAHL Cloud relay require a Bearer token in the `Authorization` header.
+
+```http
+Authorization: Bearer YOUR_AGENT_API_KEY
+```
+
+Obtain your agent API key from the [OAHL Developer Portal](https://oahl.onrender.com). You can also pass it as the `OAHL_AGENT_API_KEY` environment variable when using the CLI MCP server.
+
+<Warning>
+  Keep your agent API key secret. Do not commit it to source control. Use environment variables or a secrets manager.
+</Warning>
+
+---
+
+## Agent identity headers
+
+For access-policy enforcement — device visibility, per-agent and per-org allow/deny lists — include optional identity headers with every request:
+
+```http
+x-agent-id: my-agent-id
+x-agent-org-id: my-org-id
+x-agent-roles: hardware-reader,executor
+```
+
+<Note>
+  These headers are self-asserted in v1 and are not cryptographically verified. Only use them if your deployment controls agent key provisioning. See the [security guide](/security/security-guide) for details.
+</Note>
+
+Headers can also be passed through the SDK by including them as extra request headers, or they can be enforced server-side through access policies on individual devices.
+
+---
+
+## Direct API pattern
+
+The recommended agent lifecycle is:
+
+<Steps>
+  <Step title="Discover capabilities">
+    Query the Cloud relay for hardware matching your needs.
+
+    ```http
+    GET /v1/capabilities?capability=camera.capture&type=camera
+    Authorization: Bearer YOUR_AGENT_API_KEY
+    ```
+
+    The response includes matching devices, their capabilities, provider, and node IDs.
+  </Step>
+
+  <Step title="Request a session">
+    Reserve a device by posting to `/v1/requests`. Specify a capability name, an optional `device_id`, or an optional `node_id` for deterministic routing.
+
+    ```http
+    POST /v1/requests
+    Authorization: Bearer YOUR_AGENT_API_KEY
+    Content-Type: application/json
+
+    {
+      "capability": "camera.capture",
+      "device_id": "usb-cam-ghana-01"
+    }
+    ```
+
+    The response contains a `session_id` that identifies the reserved hardware assignment.
+
+    ```json
+    {
+      "session_id": "sess-abc123",
+      "status": "active"
+    }
+    ```
+  </Step>
+
+  <Step title="Execute the capability">
+    Use the `session_id` to invoke a capability. The result is returned synchronously in the response body.
+
+    ```http
+    POST /v1/sessions/sess-abc123/execute
+    Authorization: Bearer YOUR_AGENT_API_KEY
+    Content-Type: application/json
+
+    {
+      "capability": "camera.capture",
+      "params": { "resolution": "1080p" },
+      "timeout_ms": 60000
+    }
+    ```
+
+    To reduce latency when you need to run multiple commands in sequence, use the batch endpoint:
+
+    ```http
+    POST /v1/sessions/sess-abc123/execute-batch
+    Authorization: Bearer YOUR_AGENT_API_KEY
+    Content-Type: application/json
+
+    {
+      "commands": [
+        { "capability": "arm.move", "params": { "x": 10 } },
+        { "capability": "arm.close", "params": {} }
+      ]
+    }
+    ```
+  </Step>
+
+  <Step title="Stop the session">
+    Always release the device when your task is complete. This frees the hardware for other agents.
+
+    ```http
+    POST /v1/sessions/sess-abc123/stop
+    Authorization: Bearer YOUR_AGENT_API_KEY
+    ```
+  </Step>
+</Steps>
+
+---
+
+## Complete example: JavaScript SDK
+
+The following example shows the full agent lifecycle — discovery through cleanup — using `CloudClient` from `@oahl/sdk`.
+
+```typescript
+import { CloudClient } from '@oahl/sdk';
+
+const cloud = new CloudClient(
+  'https://oahl.onrender.com',
+  process.env.OAHL_AGENT_API_KEY
+);
+
+async function captureRemoteImage(region?: string): Promise<any> {
+  // 1. Discover available camera devices
+  const { devices } = await cloud.getCapabilities({
+    capability: 'camera.capture',
+    type: 'camera'
+  });
+
+  if (devices.length === 0) {
+    throw new Error('No camera devices available');
+  }
+
+  const device = devices[0];
+
+  // 2. Reserve the device
+  const { session_id } = await cloud.requestSession({
+    capability: 'camera.capture',
+    device_id: device.id
+  });
+
+  try {
+    // 3. Execute the capability
+    const result = await cloud.execute(session_id, {
+      capability: 'camera.capture',
+      params: { resolution: '1080p', format: 'jpg' },
+      timeout_ms: 120000
+    });
+
+    return result;
+  } finally {
+    // 4. Always stop the session — use finally to ensure cleanup
+    await cloud.stopSession(session_id);
+  }
+}
+```
+
+---
+
+## Complete example: Python SDK
+
+```python
+import os
+from oahl import CloudClient
+
+client = CloudClient(agent_api_key=os.environ["OAHL_AGENT_API_KEY"])
+
+def capture_remote_image(capability: str = "camera.capture") -> dict:
+    # 1. Discover available camera devices
+    response = client.get_capabilities({"capability": capability, "type": "camera"})
+    devices = response.get("devices", [])
+
+    if not devices:
+        raise RuntimeError("No camera devices available")
+
+    device = devices[0]
+
+    # 2. Reserve the device
+    session_req = client.request_session({
+        "capability": capability,
+        "device_id": device["id"]
+    })
+    session_id = session_req["session_id"]
+
+    try:
+        # 3. Execute the capability
+        result = client.execute(session_id, {
+            "capability": capability,
+            "params": {"resolution": "1080p", "format": "jpg"},
+            "timeout_ms": 120000
+        })
+        return result
+    finally:
+        # 4. Always stop the session
+        client.stop_session(session_id)
+```
+
+---
+
+## Local node vs cloud relay
+
+| | Local node (`OahlClient`) | Cloud relay (`CloudClient`) |
+|---|---|---|
+| **Endpoint** | `http://localhost:3000` | `https://oahl.onrender.com` |
+| **Discovery** | `GET /devices` | `GET /v1/capabilities` |
+| **Session** | `POST /sessions/start` | `POST /v1/requests` |
+| **Execute** | `POST /execute` | `POST /v1/sessions/{id}/execute` |
+| **Auth** | None (local trust) | Bearer token required |
+| **Use case** | Development, private lab, LAN agents | Production, remote hardware, multi-region |
+
+Use the local node client (`OahlClient`) during development or when your agent runs on the same LAN as the hardware. Use `CloudClient` for production agents that need to discover and access hardware across the internet.
+
+---
+
+## Error handling and retries
+
+All SDK clients throw an exception when the server returns a non-2xx status code. The error message includes the HTTP status code and the raw response body, which may contain structured error fields.
+
+When the OAHL Cloud relay cannot fulfill a request, it may include an `agent_recovery_hints` field in the error body. Your agent or tool wrapper should inspect this field and act accordingly — for example, by selecting a different device, adjusting parameters, or waiting before retrying.
+
+```python
+import time
+from oahl import CloudClient
+
+client = CloudClient(agent_api_key=os.environ["OAHL_AGENT_API_KEY"])
+
+def execute_with_retry(capability: str, params: dict, max_retries: int = 3) -> dict:
+    for attempt in range(max_retries):
+        try:
+            session_req = client.request_session({"capability": capability})
+            session_id = session_req["session_id"]
+            try:
+                return client.execute(session_id, {
+                    "capability": capability,
+                    "params": params,
+                    "timeout_ms": 60000
+                })
+            finally:
+                client.stop_session(session_id)
+        except Exception as e:
+            error_message = str(e)
+            # Check for agent_recovery_hints in error body
+            if "agent_recovery_hints" in error_message:
+                print(f"Recovery hint found: {error_message}")
+            if attempt == max_retries - 1:
+                raise
+            # Back off before retrying
+            time.sleep(2 ** attempt)
+```
+
+<Tip>
+  Wrap every `execute` call in a `try/finally` block so the session is always stopped, even if an error occurs. Leaked sessions hold device reservations and can block other agents.
+</Tip>
+
+## Design recommendations
+
+- **Keep tools capability-based, not device-based.** Agents understand `capture_image`, not `use /dev/video0`.
+- **Expose only safe parameters.** Strip any fields that could trigger unintended hardware behavior.
+- **Always handle busy and unavailable states.** Hardware can fail or already be in use.
+- **Include session cleanup in a `finally` block.** Always release the hardware when done.
+- **Log all requests.** Hardware calls are side-effectful and difficult to reproduce.
+- **Use policy-aware retries.** Inspect `agent_recovery_hints` before blindly retrying.

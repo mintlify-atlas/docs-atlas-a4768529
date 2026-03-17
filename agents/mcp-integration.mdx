@@ -1,0 +1,249 @@
+---
+title: "MCP integration"
+description: "Expose all OAHL hardware capabilities as MCP tools to Claude Desktop, Cursor, and any MCP-compatible agent — with no code required."
+keywords: ["mcp", "model context protocol", "claude desktop", "cursor", "oahl mcp", "tools"]
+---
+
+The Model Context Protocol (MCP) is an open standard that lets AI assistants call external tools. The OAHL CLI includes a built-in MCP server that wraps every hardware capability registered in the Cloud relay as an MCP-callable tool — allowing Claude Desktop, Cursor, and any other MCP-compatible agent to discover and use physical hardware directly from a conversation.
+
+<Note>
+  The MCP server connects to the OAHL Cloud relay, not a local node. You need a valid agent API key to use it.
+</Note>
+
+---
+
+## How it works
+
+When you run `oahl mcp`, the CLI starts an MCP server that:
+
+1. Calls `GET /v1/capabilities` on the OAHL Cloud relay to fetch all currently available hardware capabilities.
+2. Converts each capability into an MCP tool. The tool name is derived from the capability name and device ID: `{capability_name}_{device_id}` (dots replaced with underscores, non-alphanumeric characters in the device ID replaced with underscores).
+3. Listens on stdio for tool calls from the connected MCP client.
+4. When a tool is called, the server automatically:
+   - Requests a session for the target device via `POST /v1/requests`
+   - Executes the capability via `POST /v1/sessions/{id}/execute`
+   - Stops the session via `POST /v1/sessions/{id}/stop`
+   - Returns the result as a JSON text block to the MCP client
+
+Session management is handled entirely by the MCP server. The agent does not need to manage session IDs.
+
+---
+
+## Starting the MCP server
+
+### Prerequisites
+
+- The OAHL CLI installed: `npm install -g @fredabila/oahl`
+- A valid agent API key from the [OAHL Developer Portal](https://oahl.onrender.com)
+
+### Start with a flag
+
+```bash
+oahl mcp --key YOUR_AGENT_API_KEY
+```
+
+### Start with an environment variable
+
+```bash
+export OAHL_AGENT_API_KEY=YOUR_AGENT_API_KEY
+oahl mcp
+```
+
+The `--key` flag takes precedence over the environment variable. If neither is provided, the command exits with an error:
+
+```
+❌ Error: Agent API Key is required via --key or OAHL_AGENT_API_KEY
+```
+
+### Point to a different cloud URL
+
+By default, the MCP server connects to `https://oahl.onrender.com`. To use a self-hosted relay:
+
+```bash
+oahl mcp --url https://your-relay.example.com --key YOUR_AGENT_API_KEY
+```
+
+### Full flag reference
+
+| Flag | Default | Description |
+|---|---|---|
+| `--url`, `-u` | `https://oahl.onrender.com` | Cloud relay URL to fetch capabilities from |
+| `--key`, `-k` | — | Agent API key. Falls back to `OAHL_AGENT_API_KEY` env var |
+
+---
+
+## Connecting an MCP client
+
+<Tabs>
+  <Tab title="Claude Desktop">
+    Open your Claude Desktop configuration file:
+
+    - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+    - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+    Add the OAHL MCP server under `mcpServers`:
+
+    ```json
+    {
+      "mcpServers": {
+        "oahl": {
+          "command": "oahl",
+          "args": ["mcp"],
+          "env": {
+            "OAHL_AGENT_API_KEY": "YOUR_AGENT_API_KEY"
+          }
+        }
+      }
+    }
+    ```
+
+    Restart Claude Desktop. The OAHL hardware tools will appear in the tools panel.
+  </Tab>
+  <Tab title="Cursor">
+    Open your Cursor MCP settings at **Settings > MCP** and add a new server entry:
+
+    ```json
+    {
+      "oahl": {
+        "command": "oahl",
+        "args": ["mcp"],
+        "env": {
+          "OAHL_AGENT_API_KEY": "YOUR_AGENT_API_KEY"
+        }
+      }
+    }
+    ```
+
+    After saving, Cursor will start the MCP server and make OAHL tools available in the Composer.
+  </Tab>
+  <Tab title="Other MCP clients">
+    Any MCP client that supports stdio transport can connect to the OAHL MCP server. Configure the client to launch the following command:
+
+    ```bash
+    oahl mcp --key YOUR_AGENT_API_KEY
+    ```
+
+    The server communicates over `stdin`/`stdout` using the MCP stdio transport protocol.
+  </Tab>
+</Tabs>
+
+---
+
+## MCP tools exposed
+
+Tools are generated dynamically from the capabilities registered in the Cloud relay at the time the server starts. Each tool corresponds to a single (capability, device) pair.
+
+### Tool naming
+
+Tool names follow this pattern:
+
+```
+{capability_name}_{device_id}
+```
+
+Where:
+- Dots in `capability_name` are replaced with underscores (e.g. `camera.capture` → `camera_capture`)
+- Non-alphanumeric characters in `device_id` are replaced with underscores
+
+For example, a device `usb-cam-gh-01` with capability `camera.capture` produces the tool name:
+
+```
+camera_capture_usb_cam_gh_01
+```
+
+### Tool description
+
+Each tool's description is built from the device ID, the capability description, and any `instructions` field defined on the capability:
+
+```
+[Device: usb-cam-gh-01] Captures a still image from the camera. Instructions: ...
+```
+
+### Tool input schema
+
+If the capability defines a JSON Schema in its `schema` field, that schema is used directly as the MCP tool's `inputSchema`. For capabilities without a schema, a generic object schema is used:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "params": {
+      "type": "object",
+      "description": "Parameters for the capability"
+    }
+  }
+}
+```
+
+### Tool execution flow
+
+When the MCP client calls a tool, the server executes this sequence automatically:
+
+<Steps>
+  <Step title="Parse the tool call">
+    The server extracts the capability name and device ID from the tool name by splitting on the last underscore segment.
+  </Step>
+  <Step title="Request a session">
+    A session is opened via `POST /v1/requests` with the resolved `capability` and `device_id`.
+  </Step>
+  <Step title="Execute the capability">
+    The capability is executed via `POST /v1/sessions/{id}/execute` with a 60-second timeout. The `arguments` from the MCP tool call are passed as `params`.
+  </Step>
+  <Step title="Stop the session">
+    The session is always stopped after execution, whether the capability succeeded or failed.
+  </Step>
+  <Step title="Return the result">
+    The result is serialized as JSON and returned as an MCP text content block. Errors are returned with `isError: true`.
+  </Step>
+</Steps>
+
+---
+
+## Authentication
+
+The MCP server authenticates all requests to the Cloud relay using the agent API key you provide at startup. The key is sent as a Bearer token in the `Authorization` header of every request.
+
+<Warning>
+  Never commit your API key to source control. Use the `OAHL_AGENT_API_KEY` environment variable and manage it with your system's secrets tooling.
+</Warning>
+
+### Environment variable
+
+```bash
+export OAHL_AGENT_API_KEY=your-key-here
+oahl mcp
+```
+
+MCP client configurations (such as the Claude Desktop `claude_desktop_config.json`) support passing environment variables directly to the server process, which is the recommended approach for key management.
+
+---
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="No tools appear in my MCP client">
+    The MCP server fetches tools at startup. If no tools appear:
+
+    - Confirm your API key is valid and has access to at least one device.
+    - Check that the Cloud relay at `--url` is reachable.
+    - Restart the MCP client to re-launch the server process and refresh the tool list.
+  </Accordion>
+  <Accordion title="Tool call returns an error">
+    The server returns errors as MCP text content with `isError: true`. Common causes:
+
+    - The target device is busy — another session is already active on it.
+    - The capability timed out — the default timeout is 60 seconds.
+    - The device went offline between tool listing and tool call.
+
+    Check the server's stderr output for the raw error message from the Cloud relay.
+  </Accordion>
+  <Accordion title="oahl: command not found">
+    Install the CLI globally:
+
+    ```bash
+    npm install -g @fredabila/oahl
+    ```
+
+    If you use a Node version manager (nvm, fnm), make sure the global bin directory for the active Node version is on your `PATH`.
+  </Accordion>
+</AccordionGroup>

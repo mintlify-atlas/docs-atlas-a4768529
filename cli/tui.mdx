@@ -1,0 +1,128 @@
+---
+title: "oahl tui"
+description: "Interactive terminal UI for managing node settings, plugins, devices, and access policies."
+---
+
+The `tui` command opens an interactive terminal UI that lets you manage all aspects of your `oahl-config.json` without manually editing JSON.
+
+```bash
+oahl tui
+```
+
+## Options
+
+<ParamField path="--config" type="string" default="./oahl-config.json">
+  Path to the config file to load and edit.
+
+  ```bash
+  oahl tui --config /etc/oahl/node.json
+  ```
+</ParamField>
+
+## Main menu
+
+The TUI opens with a status summary and a selection menu:
+
+```
+? OAHL Config TUI (Node: local-node-01 | Plugins: 2 | Devices: 1)
+❯ Edit node settings
+  Manage plugins
+  Manage devices + access policies
+  Import detected devices from plugins
+  Save
+  Save and exit
+  Exit without saving
+```
+
+The summary line updates as you make changes.
+
+## Edit node settings
+
+Opens a form to edit core node properties:
+
+| Field | Description | Default |
+|---|---|---|
+| Node ID | Unique identifier for this node | `local-node-01` |
+| Provider name | Human-readable provider label | `Local Lab` |
+| Owner ID | Optional owner identifier; omit to clear | *(empty)* |
+| Cloud URL | Registry endpoint | `https://oahl.onrender.com` |
+| Provider API key | API key for cloud registration (masked) | *(current value)* |
+
+## Manage plugins
+
+Lets you add or remove adapter plugins from the `plugins` array:
+
+```
+? Plugins (2)
+❯ Add plugin
+  Remove plugin
+  Back
+```
+
+**Add plugin** — prompts for a package name (e.g. `@oahl/adapter-usb-camera`) and appends it to the list if not already present.
+
+**Remove plugin** — displays a selection list of installed plugins and removes the chosen entry.
+
+<Note>
+  The TUI edits the in-memory config. Plugins are not installed or uninstalled from `node_modules` here. Use `oahl install` and `oahl remove` for npm-level management.
+</Note>
+
+## Manage devices + access policies
+
+Lets you add, edit, or remove device entries:
+
+```
+? Devices (1)
+❯ Add device
+  Edit device
+  Remove device
+  Back
+```
+
+When adding or editing a device, the TUI prompts for the following fields:
+
+| Field | Description |
+|---|---|
+| Device ID | Unique identifier for the device |
+| Device type | Free-text type label (e.g. `camera`, `sdr`) |
+| Adapter plugin | Select from installed plugins or enter manually |
+| Capabilities | Comma-separated list (e.g. `camera.capture, camera.stream`) |
+| Owner ID | Optional per-device owner override |
+| Access visibility | `Public`, `Shared (allow-list)`, or `Private (owner/allow-list only)` |
+| Allowed agent IDs | Comma-separated agent IDs (for shared/private) |
+| Allowed org IDs | Comma-separated org IDs |
+| Denied agent IDs | Comma-separated agent IDs to explicitly block |
+| Max session minutes | Maximum session duration in minutes (minimum 1) |
+
+## Import detected devices from plugins
+
+Calls `initialize()` and `getDevices()` on each adapter plugin listed in `plugins`, then merges the returned devices into the config:
+
+- Devices not already in the config are **added**.
+- Devices that already exist (matched by `id`) are **updated** — capabilities and type are refreshed while existing policy settings are preserved.
+
+Completion output:
+
+```
+🔎 Device import complete: 3 detected, 2 added, 1 updated.
+```
+
+<Warning>
+  Plugin modules are loaded from `node_modules` at runtime. If a plugin is listed in `plugins` but not installed, the TUI logs a warning and skips that plugin.
+</Warning>
+
+## Saving changes
+
+| Action | Behavior |
+|---|---|
+| **Save** | Writes config to disk and continues the TUI session |
+| **Save and exit** | Writes config to disk and closes the TUI |
+| **Exit without saving** | Prompts to confirm discarding unsaved changes, then exits |
+
+When you choose **Exit without saving** and there are unsaved changes, you are asked:
+
+```
+? Discard unsaved changes? › No
+```
+
+Answering `No` returns you to the main menu.

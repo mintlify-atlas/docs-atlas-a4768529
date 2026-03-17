@@ -1,0 +1,328 @@
+---
+title: "Docker deployment"
+description: "Run your OAHL node in a Docker container with hardware passthrough and automatic restarts."
+keywords: ["docker", "docker-compose", "deployment", "device passthrough", "volume mounts", "container"]
+---
+
+Docker is the recommended way to run an OAHL node when your adapters require native hardware bindings. The official image ships with all build tools pre-installed so you do not need to configure your host machine.
+
+## When to use Docker
+
+Use Docker when:
+
+- Your adapters rely on native C++ bindings (for example `rtl-sdr`, `serialport`, or BLE)
+- You want to avoid installing `build-essential`, `python3`, `libusb`, or `ffmpeg` on the host
+- You need the node to restart automatically after a reboot
+- You want to isolate the OAHL process from the rest of the host machine
+
+The Docker image is based on `node:20-bullseye-slim` and pre-installs:
+
+- `build-essential` and `python3` — for node-gyp native builds
+- `libusb-1.0-0` — for USB device access
+- `rtl-sdr` — for software-defined radio adapters
+- `ffmpeg` and `v4l-utils` — for camera and video streaming
+- `udev` — for Linux device mapping
+
+<Note>
+  The OAHL node listens on port `3000` by default inside the container.
+</Note>
+
+## Prerequisites
+
+- Docker Engine 20 or later (or Docker Desktop)
+- A prepared `oahl-config.json` in the current directory. Run `oahl init` first if you have not done so. See the [hardware owner guide](/hardware-owners/hardware-owner-guide).
+
+## Run with docker run
+
+The quickest way to start a node:
+
+```bash
+docker run -d \
+  --name oahl-node \
+  -p 8080:8080 \
+  -v $(pwd)/oahl-config.json:/app/oahl-config.json \
+  --device=/dev/video0 \
+  oahl/node:latest
+```
+
+This command:
+
+- Runs the container in detached mode (`-d`)
+- Names the container `oahl-node`
+- Exposes port `8080` on the host, mapped to `8080` inside the container
+- Mounts your local `oahl-config.json` into the container
+- Passes the `/dev/video0` USB camera into the container
+
+<Warning>
+  The `--device` flag passes the physical device directly into the container. Make sure the path matches the device connected to your host before starting.
+</Warning>
+
+## Using docker-compose
+
+For production deployments, use the provided `docker-compose.yml`. It configures automatic restarts and makes device mapping easy to maintain.
+
+```yaml docker-compose.yml
+version: '3.8'
+
+services:
+  oahl-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fredabila/oahl-node:latest
+    container_name: oahl-node
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      # Mount the local config file into the container
+      - ./oahl-config.json:/app/packages/server/oahl-config.json
+    privileged: true
+    # devices:
+      # Uncomment and map hardware directly to the container
+      # - /dev/bus/usb:/dev/bus/usb
+      # - /dev/ttyACM0:/dev/ttyACM0  # For Arduino
+      # - /dev/video0:/dev/video0    # For Webcams
+```
+
+Start the node:
+
+```bash
+docker compose up -d
+```
+
+View logs:
+
+```bash
+docker compose logs -f oahl-node
+```
+
+Stop the node:
+
+```bash
+docker compose down
+```
+
+## Volume mounts
+
+The config file must be mounted into the container so the node can read it at startup. The mount path depends on how you start the container:
+
+| Method | Mount target |
+|---|---|
+| `docker run` | `/app/oahl-config.json` |
+| `docker-compose.yml` | `/app/packages/server/oahl-config.json` |
+
+```bash
+# docker run
+-v $(pwd)/oahl-config.json:/app/oahl-config.json
+
+# docker-compose.yml
+volumes:
+  - ./oahl-config.json:/app/packages/server/oahl-config.json
+```
+
+<Tip>
+  You can also mount a directory containing multiple configs and point the node to a specific file using the `--config` flag when building a custom startup command.
+</Tip>
+
+## Device passthrough
+
+To give the container access to physical hardware, use the `devices` section in `docker-compose.yml` or the `--device` flag with `docker run`.
+
+<Tabs>
+  <Tab title="USB camera">
+    ```yaml
+    devices:
+      - /dev/video0:/dev/video0
+    ```
+
+    Or with `docker run`:
+
+    ```bash
+    --device=/dev/video0:/dev/video0
+    ```
+  </Tab>
+  <Tab title="Arduino / serial">
+    ```yaml
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+    ```
+
+    Or with `docker run`:
+
+    ```bash
+    --device=/dev/ttyACM0:/dev/ttyACM0
+    ```
+  </Tab>
+  <Tab title="All USB devices">
+    Pass the entire USB bus into the container. Use this when the device path changes between reboots:
+
+    ```yaml
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    ```
+
+    The `docker-compose.yml` also includes `privileged: true`, which grants the container full access to host devices. Prefer explicit device mappings over `privileged` mode where possible.
+  </Tab>
+  <Tab title="RTL-SDR">
+    RTL-SDR devices enumerate on the USB bus. Pass the full USB bus:
+
+    ```yaml
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    ```
+
+    Or pass the specific device path found with `lsusb`.
+  </Tab>
+</Tabs>
+
+## Environment variables
+
+The following environment variables are read by the node at startup:
+
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | Port the node listens on | `3000` |
+| `OAHL_OWNER_EMAIL` | Developer Portal email, used for authentication | — |
+| `OAHL_OWNER_PIN` | Developer Portal 6-digit PIN | — |
+
+Set them in `docker-compose.yml`:
+
+```yaml
+environment:
+  - PORT=3000
+  - OAHL_OWNER_EMAIL=you@example.com
+  - OAHL_OWNER_PIN=123456
+```
+
+Or pass them to `docker run`:
+
+```bash
+docker run -d \
+  --name oahl-node \
+  -p 3000:3000 \
+  -e PORT=3000 \
+  -e OAHL_OWNER_EMAIL=you@example.com \
+  -e OAHL_OWNER_PIN=123456 \
+  -v $(pwd)/oahl-config.json:/app/oahl-config.json \
+  oahl/node:latest
+```
+
+<Warning>
+  Do not hardcode `OAHL_OWNER_PIN` in files committed to version control. Use a `.env` file or a secrets manager.
+</Warning>
+
+## Updating the container
+
+To pull the latest image and restart:
+
+```bash
+# Pull the latest image
+docker pull oahl/node:latest
+
+# Stop and remove the running container
+docker stop oahl-node && docker rm oahl-node
+
+# Start a new container with the same flags
+docker run -d \
+  --name oahl-node \
+  -p 8080:8080 \
+  -v $(pwd)/oahl-config.json:/app/oahl-config.json \
+  --device=/dev/video0 \
+  oahl/node:latest
+```
+
+With `docker-compose.yml`:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Container exits immediately after starting">
+    Check the logs for the error message:
+
+    ```bash
+    docker logs oahl-node
+    ```
+
+    Common causes:
+
+    - `oahl-config.json` not found — verify the volume mount path matches the target inside the container
+    - Missing authentication — ensure `OAHL_OWNER_EMAIL` and `OAHL_OWNER_PIN` are set
+    - Port already in use — change the host port mapping (e.g. `-p 8080:3000`)
+  </Accordion>
+
+  <Accordion title="Hardware device not accessible inside the container">
+    Verify the device path exists on the host before passing it to the container:
+
+    ```bash
+    ls -l /dev/video0
+    ls -l /dev/ttyACM0
+    ```
+
+    If the path does not exist, reconnect the hardware and check `dmesg` or `lsusb` to find the correct path.
+
+    On Linux, ensure the user running Docker has permission to access the device:
+
+    ```bash
+    sudo usermod -aG video $USER
+    sudo usermod -aG dialout $USER
+    ```
+
+    Log out and back in for group changes to take effect.
+  </Accordion>
+
+  <Accordion title="Port 3000 is already in use">
+    Either stop the process using port `3000` or map the container to a different host port:
+
+    ```bash
+    # Map container port 3000 to host port 8080
+    docker run -d \
+      --name oahl-node \
+      -p 8080:3000 \
+      -v $(pwd)/oahl-config.json:/app/oahl-config.json \
+      oahl/node:latest
+    ```
+
+    Update the `PORT` environment variable accordingly if you change the internal port.
+  </Accordion>
+
+  <Accordion title="RTL-SDR not detected inside the container">
+    RTL-SDR devices need the `rtl-sdr` udev rules on the host to prevent the kernel from claiming the device. Install them:
+
+    ```bash
+    sudo apt-get install rtl-sdr
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+    ```
+
+    Then reconnect the RTL-SDR and verify it is visible:
+
+    ```bash
+    rtl_test
+    ```
+
+    Pass the USB bus into the container:
+
+    ```yaml
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    ```
+  </Accordion>
+
+  <Accordion title="Changes to oahl-config.json are not picked up">
+    The node reads the config file at startup. After editing `oahl-config.json`, restart the container:
+
+    ```bash
+    docker restart oahl-node
+    # or with docker-compose:
+    docker compose restart oahl-node
+    ```
+  </Accordion>
+</AccordionGroup>

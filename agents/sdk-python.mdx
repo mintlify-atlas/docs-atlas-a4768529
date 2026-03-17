@@ -1,0 +1,500 @@
+---
+title: "Python SDK"
+description: "API reference for the oahl Python package — typed clients for local OAHL nodes and the cloud relay."
+keywords: ["python", "sdk", "oahl", "OahlClient", "CloudClient", "pip"]
+---
+
+The `oahl` Python package provides clients for both local OAHL nodes (`OahlClient`) and the OAHL Cloud relay (`CloudClient`). It requires Python 3.8 or later and depends on the [`requests`](https://requests.readthedocs.io) library.
+
+## Installation
+
+```bash
+pip install oahl
+```
+
+For local development against the SDK source:
+
+```bash
+pip install -e ./sdk-python
+```
+
+---
+
+## `OahlClient`
+
+Use `OahlClient` to interact with a local or self-hosted OAHL node over HTTP.
+
+### Constructor
+
+```python
+OahlClient(base_url: str = 'http://localhost:3000')
+```
+
+<ParamField path="base_url" type="str" default="http://localhost:3000">
+  Base URL of the local OAHL node. Trailing slashes are stripped automatically.
+</ParamField>
+
+```python
+from oahl import OahlClient
+
+client = OahlClient('http://localhost:3000')
+```
+
+### Methods
+
+#### `health()`
+
+Checks whether the node is running and responsive.
+
+```python
+def health(self) -> dict
+```
+
+```python
+status = client.health()
+# {'status': 'ok'}
+```
+
+#### `get_devices()`
+
+Lists all devices registered on this node.
+
+```python
+def get_devices(self) -> list[dict]
+```
+
+```python
+devices = client.get_devices()
+print(devices[0]['id'])   # e.g. 'usb-cam-1'
+print(devices[0]['type']) # e.g. 'camera'
+```
+
+#### `get_capabilities(device_id)`
+
+Returns the capabilities registered for a specific device.
+
+```python
+def get_capabilities(self, device_id: str) -> list[dict]
+```
+
+<ParamField path="device_id" type="str" required>
+  The ID of the device to query.
+</ParamField>
+
+```python
+caps = client.get_capabilities('usb-cam-1')
+print([c['name'] for c in caps]) # ['camera.capture', 'camera.stream']
+```
+
+#### `start_session(device_id)`
+
+Reserves a device and opens an exclusive session.
+
+```python
+def start_session(self, device_id: str) -> dict
+```
+
+<ParamField path="device_id" type="str" required>
+  The ID of the device to reserve.
+</ParamField>
+
+Returns a session dictionary containing at minimum an `id` key.
+
+```python
+session = client.start_session('usb-cam-1')
+print(session['id']) # e.g. 'sess-abc123'
+```
+
+#### `execute(session_id, capability_name, args=None)`
+
+Executes a named capability within an active session.
+
+```python
+def execute(
+    self,
+    session_id: str,
+    capability_name: str,
+    args: Optional[dict] = None
+) -> dict
+```
+
+<ParamField path="session_id" type="str" required>
+  The session ID returned by `start_session`.
+</ParamField>
+<ParamField path="capability_name" type="str" required>
+  The dot-notation capability name (e.g. `camera.capture`).
+</ParamField>
+<ParamField path="args" type="dict">
+  Optional parameters to pass to the capability. Defaults to an empty dict.
+</ParamField>
+
+```python
+result = client.execute(session['id'], 'camera.capture', {
+    'resolution': '1080p',
+    'format': 'jpg'
+})
+```
+
+#### `stop_session(session_id)`
+
+Releases the device and closes the session.
+
+```python
+def stop_session(self, session_id: str) -> dict
+```
+
+<ParamField path="session_id" type="str" required>
+  The session ID to stop.
+</ParamField>
+
+```python
+client.stop_session(session['id'])
+```
+
+#### `get_session(session_id)`
+
+Returns the current status and metadata for a session.
+
+```python
+def get_session(self, session_id: str) -> dict
+```
+
+<ParamField path="session_id" type="str" required>
+  The session ID to look up.
+</ParamField>
+
+```python
+info = client.get_session('sess-abc123')
+print(info['status']) # 'active'
+```
+
+---
+
+## `CloudClient`
+
+Use `CloudClient` to discover hardware and execute capabilities via the OAHL Cloud relay. Authentication is required for all cloud requests.
+
+### Constructor
+
+```python
+CloudClient(
+    base_url: str = 'https://oahl.onrender.com',
+    agent_api_key: Optional[str] = None
+)
+```
+
+<ParamField path="base_url" type="str" default="https://oahl.onrender.com">
+  Base URL of the OAHL Cloud relay. Trailing slashes are stripped automatically.
+</ParamField>
+<ParamField path="agent_api_key" type="str">
+  Bearer token used to authenticate requests. Can also be set later with `set_agent_api_key`.
+</ParamField>
+
+```python
+import os
+from oahl import CloudClient
+
+client = CloudClient(agent_api_key=os.environ['OAHL_AGENT_API_KEY'])
+```
+
+### Methods
+
+#### `set_agent_api_key(agent_api_key)`
+
+Updates the API key used for authentication.
+
+```python
+def set_agent_api_key(self, agent_api_key: str) -> None
+```
+
+```python
+client.set_agent_api_key('new-key-value')
+```
+
+#### `get_capabilities(query=None)`
+
+Searches the Cloud relay for devices and capabilities matching the given filters.
+
+```python
+def get_capabilities(self, query: Optional[dict] = None) -> dict
+```
+
+<ParamField path="query" type="dict">
+  Optional filter and pagination parameters passed as query string values.
+
+  <Expandable title="Supported query keys">
+    <ParamField path="q" type="str">
+      Free-text search across device names and capability descriptions.
+    </ParamField>
+    <ParamField path="type" type="str">
+      Filter by device type (e.g. `camera`, `sdr`, `mobile`).
+    </ParamField>
+    <ParamField path="provider" type="str">
+      Filter by provider ID.
+    </ParamField>
+    <ParamField path="node_id" type="str">
+      Filter by a specific node ID.
+    </ParamField>
+    <ParamField path="capability" type="str">
+      Filter by capability name (e.g. `camera.capture`).
+    </ParamField>
+    <ParamField path="page" type="int">
+      Page number for paginated results (1-indexed).
+    </ParamField>
+    <ParamField path="page_size" type="int">
+      Number of results per page.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+Returns a dict with `devices` (list), optional `pagination` metadata, and applied `filters`.
+
+```python
+response = client.get_capabilities({'capability': 'camera.capture', 'page': 1})
+devices = response['devices']
+print(response.get('pagination', {}).get('total'))
+```
+
+#### `request_session(input_data)`
+
+Reserves a device or capability via the Cloud relay and returns a session ID.
+
+```python
+def request_session(self, input_data: dict) -> dict
+```
+
+<ParamField path="input_data" type="dict">
+  Session request parameters.
+
+  <Expandable title="Supported keys">
+    <ParamField path="capability" type="str">
+      The capability to reserve (e.g. `camera.capture`). Used for routing when `device_id` is not specified.
+    </ParamField>
+    <ParamField path="device_id" type="str">
+      Target a specific device by ID.
+    </ParamField>
+    <ParamField path="node_id" type="str">
+      Target a specific node by ID.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+Returns a dict with `session_id` and `status`.
+
+```python
+session_req = client.request_session({
+    'capability': 'camera.capture',
+    'device_id': devices[0]['id']
+})
+session_id = session_req['session_id']
+```
+
+#### `execute(session_id, input_data)`
+
+Executes a capability on an active cloud session. Returns the result synchronously.
+
+```python
+def execute(self, session_id: str, input_data: dict) -> dict
+```
+
+<ParamField path="session_id" type="str" required>
+  The session ID returned by `request_session`.
+</ParamField>
+<ParamField path="input_data" type="dict">
+  Execution parameters.
+
+  <Expandable title="Supported keys">
+    <ParamField path="capability" type="str" required>
+      The capability to execute.
+    </ParamField>
+    <ParamField path="params" type="dict">
+      Capability-specific parameters passed to the adapter.
+    </ParamField>
+    <ParamField path="timeout_ms" type="int">
+      Maximum time in milliseconds to wait for the capability to complete.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+```python
+result = client.execute(session_id, {
+    'capability': 'camera.capture',
+    'params': {'resolution': '1080p'},
+    'timeout_ms': 60000
+})
+```
+
+#### `stop_session(session_id)`
+
+Stops a cloud session and releases the associated device.
+
+```python
+def stop_session(self, session_id: str) -> dict
+```
+
+<ParamField path="session_id" type="str" required>
+  The session ID to stop.
+</ParamField>
+
+```python
+client.stop_session(session_id)
+```
+
+---
+
+## Data classes
+
+The following dataclasses are exported from `oahl` and match the shapes returned by the local node API. Cloud relay methods return plain dicts.
+
+```python
+from oahl import Device, Capability, Session
+```
+
+<AccordionGroup>
+  <Accordion title="Device">
+    ```python
+    @dataclass
+    class Device:
+        id: str
+        type: str
+        name: str
+        isPublic: bool
+        manufacturer: Optional[str] = None
+        model: Optional[str] = None
+        serial_number: Optional[str] = None
+        semantic_context: Optional[list[str]] = None
+        metadata: Optional[dict] = None
+        pricing: Optional[dict] = None
+    ```
+  </Accordion>
+  <Accordion title="Capability">
+    ```python
+    @dataclass
+    class Capability:
+        name: str
+        description: str
+        schema: dict
+        instructions: Optional[str] = None
+        semantic_type: Optional[str] = None
+        helper_url: Optional[str] = None
+        template: Optional[str] = None
+        context: Optional[str] = None
+        metadata: Optional[dict] = None
+        pricing: Optional[dict] = None
+    ```
+  </Accordion>
+  <Accordion title="Session">
+    ```python
+    @dataclass
+    class Session:
+        id: str
+        deviceId: str
+        startTime: int
+        status: str
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Complete examples
+
+<Tabs>
+  <Tab title="Local node">
+    Connect to a local node, list devices, execute a capability, and clean up.
+
+    ```python
+    import json
+    from oahl import OahlClient
+
+    client = OahlClient('http://localhost:3000')
+
+    # 1. Check the node is reachable
+    print(client.health())
+
+    # 2. List all registered devices
+    devices = client.get_devices()
+    print(json.dumps(devices, indent=2))
+
+    # 3. Pick the first camera device
+    camera = next((d for d in devices if d['type'] == 'camera'), devices[0])
+
+    # 4. Open a session
+    session = client.start_session(camera['id'])
+    session_id = session['id']
+
+    try:
+        # 5. Execute a capability
+        result = client.execute(session_id, 'camera.capture', {
+            'resolution': '1080p'
+        })
+        print(json.dumps(result, indent=2))
+    finally:
+        # 6. Always stop the session
+        client.stop_session(session_id)
+    ```
+  </Tab>
+  <Tab title="Cloud relay">
+    Discover hardware through the Cloud relay, reserve a session, and execute a capability.
+
+    ```python
+    import os
+    import json
+    from oahl import CloudClient
+
+    client = CloudClient(agent_api_key=os.environ['OAHL_AGENT_API_KEY'])
+
+    # 1. Discover available camera devices
+    response = client.get_capabilities({'capability': 'camera.capture'})
+    devices = response['devices']
+
+    if not devices:
+        raise RuntimeError('No camera devices available')
+
+    device = devices[0]
+    print(f"Using device {device['id']} on node {device['node_id']}")
+
+    # 2. Reserve the device
+    session_req = client.request_session({
+        'capability': 'camera.capture',
+        'device_id': device['id']
+    })
+    session_id = session_req['session_id']
+
+    try:
+        # 3. Execute the capability
+        result = client.execute(session_id, {
+            'capability': 'camera.capture',
+            'params': {'resolution': '720p'},
+            'timeout_ms': 120000
+        })
+        print(json.dumps(result, indent=2))
+    finally:
+        # 4. Always stop the session
+        client.stop_session(session_id)
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Error handling
+
+Both `OahlClient` and `CloudClient` raise a standard Python `Exception` when the server returns a non-2xx status code. The message includes the HTTP status code and the parsed error text from the response body.
+
+```python
+import os
+from oahl import CloudClient
+
+client = CloudClient(agent_api_key=os.environ['OAHL_AGENT_API_KEY'])
+
+try:
+    session_req = client.request_session({'capability': 'camera.capture'})
+except Exception as e:
+    # e.g. "HTTP error 404: No device available for capability camera.capture"
+    print(f'Request failed: {e}')
+```
+
+<Tip>
+  Use a `try/finally` block around any `execute` call so `stop_session` is always called — even when execution raises an exception. Leaked sessions hold device reservations and can block other agents.
+</Tip>

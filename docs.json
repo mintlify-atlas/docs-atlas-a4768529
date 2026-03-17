@@ -1,122 +1,136 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Open Agent Hardware Layer (OAHL)",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0ea5e9",
+    "light": "#e0f2fe",
+    "dark": "#0c4a6e"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/fredabila/oahl"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/fredabila/oahl"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "architecture"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Hardware Owners",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "hardware-owners/hardware-owner-guide",
+              "hardware-owners/configuration",
+              "hardware-owners/docker-deployment"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Adapters",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "adapters/overview",
+              "adapters/adapter-guide",
+              "adapters/transport-plugin-architecture",
+              "adapters/transport-attachment-profiles"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Agent Integration",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "agents/agent-integration-guide",
+              "agents/sdk-javascript",
+              "agents/sdk-python",
+              "agents/mcp-integration"
+            ]
+          },
+          {
+            "group": "Security & Policies",
+            "pages": [
+              "security/security-guide",
+              "security/access-policies"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/oahl-protocol-v1",
+              "advanced/wot-alignment",
+              "advanced/semantic-metadata",
+              "advanced/standardization-roadmap"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "api-reference/overview",
+              "api-reference/authentication"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Agent Endpoints",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api-reference/capabilities",
+              "api-reference/sessions",
+              "api-reference/execute",
+              "api-reference/execute-batch",
+              "api-reference/stop-session"
+            ]
+          },
+          {
+            "group": "Provider Endpoints",
+            "pages": [
+              "api-reference/register-node",
+              "api-reference/poll-commands",
+              "api-reference/submit-result"
+            ]
+          },
+          {
+            "group": "WebSocket",
+            "pages": [
+              "api-reference/websocket"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/init",
+              "cli/start",
+              "cli/login",
+              "cli/scan-ports",
+              "cli/tui",
+              "cli/create-adapter",
+              "cli/install-adapter",
+              "cli/mcp",
+              "cli/conformance"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,310 @@
+---
+title: "Transport attachment profiles"
+description: "How adapters declare and use TransportAttachmentProfile descriptors to standardise hardware connectivity across USB, serial, BLE, MQTT, WebRTC, and more."
+keywords: ["attachment profile", "transport", "protocol", "USB", "serial", "BLE", "MQTT", "WebRTC", "oahl-attachment-profile"]
+---
+
+A transport attachment profile is a structured descriptor that tells the OAHL node — and any `TransportProvider` — exactly how a physical device is attached, discovered, authenticated, and controlled. Declaring profiles in your adapter enables consistent support across all connection methods without changing the agent-facing capability model.
+
+## Goal
+
+Allow any adapter to expose device connectivity metadata in a uniform shape so that:
+
+- Transport providers can select the right connection method automatically.
+- The node can validate transport readiness in `healthCheck()`.
+- Agents receive structured errors when transport is unavailable rather than opaque failures.
+- Device connectivity can change (e.g. USB cable removed, switching to Wi-Fi) without altering the capability API.
+
+## The TransportAttachmentProfile type
+
+The canonical definition lives in `packages/core/src/transport.ts` and the schema is in `oahl-attachment-profile.schema.json` (`$id: https://oahl.dev/schemas/attachment-profile.schema.json`):
+
+```typescript
+export interface TransportAttachmentProfile {
+  protocol: TransportProtocol;   // Required
+  mode: TransportMode;           // Required
+  endpoint?: string;
+  auth?: {
+    type: TransportAuthType;
+    details?: any;
+  };
+  security?: {
+    tls?: boolean;
+    certificate_pinning?: boolean;
+    encrypted_transport?: boolean;
+  };
+  metadata?: Record<string, any>;
+}
+
+export type TransportProtocol =
+  | 'usb' | 'serial' | 'pcie' | 'gpio' | 'i2c' | 'spi'
+  | 'ble' | 'wifi_direct'
+  | 'tcp' | 'udp' | 'http' | 'https' | 'ws' | 'wss'
+  | 'mqtt' | 'mqtts' | 'coap' | 'rtsp' | 'grpc'
+  | 'webrtc';
+
+export type TransportMode = 'local' | 'lan' | 'wan' | 'relay';
+
+export type TransportAuthType = 'none' | 'token' | 'basic' | 'mtls' | 'pairing' | 'custom';
+```
+
+## Profile fields
+
+<AccordionGroup>
+  <Accordion title="protocol (required)">
+    The physical or network protocol used to reach the device. Must be one of the `TransportProtocol` union values. The schema enum covers all supported values:
+
+    **Local physical:** `usb`, `serial`, `pcie`, `gpio`, `i2c`, `spi`
+
+    **Local wireless:** `ble`, `wifi_direct`
+
+    **Network:** `tcp`, `udp`, `http`, `https`, `ws`, `wss`, `mqtt`, `mqtts`, `coap`, `rtsp`, `grpc`
+
+    **Real-time relay:** `webrtc`
+  </Accordion>
+  <Accordion title="mode (required)">
+    The connectivity scope:
+
+    | Value | Meaning |
+    |-------|---------|
+    | `local` | Device is directly connected to the node machine (USB cable, UART, GPIO) |
+    | `lan` | Device is on the same local network segment |
+    | `wan` | Device is reachable over the public internet |
+    | `relay` | Device is reached through a relay or WebRTC peer connection |
+  </Accordion>
+  <Accordion title="endpoint">
+    The address used to reach the device — a serial port path (`/dev/ttyUSB0`), an IP address and port, an MQTT broker URL, or any other addressing string the transport plugin understands. Omit for protocol-addressed hardware like USB (where the OS provides discovery).
+  </Accordion>
+  <Accordion title="auth">
+    Authentication requirements. The `type` field must be one of:
+
+    - `none` — no authentication required
+    - `token` — bearer or API token
+    - `basic` — username/password
+    - `mtls` — mutual TLS certificate exchange
+    - `pairing` — device-pairing flow (e.g. ADB pairing code)
+    - `custom` — adapter-specific mechanism described in `details`
+
+    The `details` field accepts any JSON value and is interpreted by the specific transport plugin.
+  </Accordion>
+  <Accordion title="security">
+    Security configuration for the connection:
+
+    - `tls` — whether TLS is required
+    - `certificate_pinning` — whether the server certificate must be pinned
+    - `encrypted_transport` — whether an additional application-layer encryption is used
+  </Accordion>
+  <Accordion title="metadata">
+    Free-form additional context. Common uses include ADB channel identifiers, driver version strings, hardware pairing tokens, and BLE service UUIDs. The transport plugin defines which metadata keys it reads.
+  </Accordion>
+</AccordionGroup>
+
+## Profile families
+
+### Local physical
+
+Devices directly wired to the node machine:
+
+| Protocol | Use case |
+|----------|----------|
+| `usb` | USB devices, ADB over USB |
+| `serial` | UART/RS-232, Arduino, embedded boards, `/dev/ttyUSB0` |
+| `pcie` | PCIe expansion cards |
+| `gpio` | Raspberry Pi GPIO pins |
+| `i2c` | I²C sensor buses |
+| `spi` | SPI peripheral buses |
+
+### Local wireless
+
+| Protocol | Use case |
+|----------|----------|
+| `ble` | Bluetooth Low Energy sensors, wearables |
+| `wifi_direct` | Peer-to-peer Wi-Fi without a router |
+
+### Network
+
+| Protocol | Use case |
+|----------|----------|
+| `tcp` / `udp` | Raw TCP/UDP sockets, ADB-over-Wi-Fi |
+| `http` / `https` | REST API–accessible devices |
+| `ws` / `wss` | WebSocket streams |
+| `mqtt` / `mqtts` | IoT message brokers, robotic arm gateways |
+| `coap` | Constrained IoT devices |
+| `rtsp` | IP cameras, RTSP video streams |
+| `grpc` | gRPC services |
+
+### Real-time relay
+
+| Protocol | Use case |
+|----------|----------|
+| `webrtc` | Low-latency peer-to-peer streaming, remote robots |
+
+## Example profiles
+
+<CodeGroup>
+
+```typescript USB (local)
+const usbProfile: TransportAttachmentProfile = {
+  protocol: 'usb',
+  mode: 'local',
+  auth: { type: 'none' }
+};
+```
+
+```typescript Serial (local)
+const serialProfile: TransportAttachmentProfile = {
+  protocol: 'serial',
+  mode: 'local',
+  endpoint: '/dev/ttyUSB0',
+  auth: { type: 'none' }
+};
+```
+
+```typescript MQTT with mTLS (LAN)
+const mqttProfile: TransportAttachmentProfile = {
+  protocol: 'mqtts',
+  mode: 'lan',
+  endpoint: 'mqtts://robot-gateway.local:8883',
+  auth: { type: 'mtls' },
+  security: { tls: true, certificate_pinning: true }
+};
+```
+
+```typescript ADB over Wi-Fi (LAN)
+const adbWifiProfile: TransportAttachmentProfile = {
+  protocol: 'tcp',
+  mode: 'lan',
+  endpoint: '192.168.1.42:5555',
+  auth: { type: 'none' }
+};
+```
+
+```typescript WebRTC relay
+const webrtcProfile: TransportAttachmentProfile = {
+  protocol: 'webrtc',
+  mode: 'relay',
+  auth: { type: 'token' },
+  security: { encrypted_transport: true }
+};
+```
+
+</CodeGroup>
+
+## Android: profile transition sequence
+
+Android adapters commonly use a two-phase profile strategy:
+
+1. **Bootstrap over USB ADB** — pair and set up the device using the `usb` profile.
+2. **Switch to ADB-over-Wi-Fi or TCP** — after pairing, transition to the `tcp`/`lan` profile for cable-free operation.
+3. **Maintain heartbeats and reconnect logic** — the transport plugin handles reconnection transparently.
+4. **Capability contracts remain unchanged** — agents never see the transport change.
+
+```typescript
+// Phase 1: USB bootstrap
+const bootstrapProfile: TransportAttachmentProfile = {
+  protocol: 'usb',
+  mode: 'local',
+  metadata: { channel: 'adb' }
+};
+
+// Phase 2: Wi-Fi follow-up
+const wirelessProfile: TransportAttachmentProfile = {
+  protocol: 'tcp',
+  mode: 'lan',
+  endpoint: '192.168.1.42:5555'
+};
+```
+
+## Robotic arm example
+
+A robotic arm on an industrial LAN uses `mqtts` with mutual TLS:
+
+```typescript
+const armProfile: TransportAttachmentProfile = {
+  protocol: 'mqtts',
+  mode: 'lan',
+  endpoint: 'mqtts://robot-gateway.local:8883',
+  auth: { type: 'mtls' },
+  security: { tls: true, certificate_pinning: true },
+  metadata: { firmware_version: '3.2.1' }
+};
+```
+
+Execution responses must still follow the OAHL execution-result envelope regardless of the transport used.
+
+## Adapter requirements
+
+Adapters that declare attachment profiles must:
+
+- Expose one or more attachment descriptors per device
+- Validate transport readiness in `healthCheck()` — a failed transport must surface as `{ status: 'error' }`
+- Fail with structured errors (`TransportResult.error`) when transport is unavailable
+- Never leak credentials in execution payloads or logs
+
+<Warning>
+  Do not silently fall back to an insecure transport when the secure one fails. Surface the failure as a structured error so the agent and the operator can see what went wrong.
+</Warning>
+
+## Attachment profile schema
+
+The JSON Schema for attachment profiles is `oahl-attachment-profile.schema.json`. Use it to validate profiles at development time:
+
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oahl.dev/schemas/attachment-profile.schema.json",
+  "title": "OAHL Attachment Profile",
+  "type": "object",
+  "required": ["protocol", "mode"],
+  "properties": {
+    "protocol": {
+      "type": "string",
+      "enum": [
+        "usb", "serial", "pcie", "gpio", "i2c", "spi",
+        "ble", "wifi_direct",
+        "tcp", "udp", "http", "https", "ws", "wss",
+        "mqtt", "mqtts", "coap", "rtsp", "grpc",
+        "webrtc"
+      ]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["local", "lan", "wan", "relay"]
+    },
+    "endpoint": { "type": "string" },
+    "auth": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["none", "token", "basic", "mtls", "pairing", "custom"]
+        },
+        "details": {}
+      }
+    },
+    "security": {
+      "type": "object",
+      "properties": {
+        "tls": { "type": "boolean" },
+        "certificate_pinning": { "type": "boolean" },
+        "encrypted_transport": { "type": "boolean" }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+## Future: attestation profiles
+
+A future extension to the attachment profile standard will add a standardised attestation block:
+
+- Node identity document
+- Signed transport claims
+- Hardware trust level metadata
+
+This will enable zero-trust verification of hardware identity before establishing connections.

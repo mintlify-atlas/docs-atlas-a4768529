@@ -1,0 +1,233 @@
+---
+title: 'List capabilities'
+description: 'Discover available hardware devices and their capabilities with GET /v1/capabilities.'
+---
+
+## `GET /v1/capabilities`
+
+Returns all devices visible to the calling agent. Visibility is determined by each device's access policy and the agent identity headers you supply.
+
+### Query parameters
+
+<ParamField query="q" type="string">
+  Free-text search across device ID, type, provider name, and capability names.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by device type (e.g. `camera`, `sensor`, `radio`, `mobile`).
+</ParamField>
+
+<ParamField query="provider" type="string">
+  Filter by provider name.
+</ParamField>
+
+<ParamField query="node_id" type="string">
+  Restrict results to a specific hardware node.
+</ParamField>
+
+<ParamField query="capability" type="string">
+  Filter to devices that expose a specific capability (partial match).
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">
+  Page number (1-indexed). Minimum: `1`.
+</ParamField>
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page. Minimum: `1`, maximum: `100`.
+</ParamField>
+
+### Response
+
+<ResponseField name="timestamp" type="integer">
+  Unix epoch milliseconds at time of response.
+</ResponseField>
+
+<ResponseField name="devices" type="DeviceDescriptor[]">
+  Array of matching devices.
+  <Expandable title="DeviceDescriptor properties">
+    <ResponseField name="id" type="string" required>
+      Unique device identifier.
+    </ResponseField>
+    <ResponseField name="type" type="string" required>
+      Device category (e.g. `camera`, `sensor`, `radio`, `mobile`).
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Human-readable device name.
+    </ResponseField>
+    <ResponseField name="capabilities" type="CapabilityDescriptor[]" required>
+      Capabilities this device exposes.
+      <Expandable title="CapabilityDescriptor properties">
+        <ResponseField name="name" type="string" required>
+          Capability name (e.g. `camera.capture`).
+        </ResponseField>
+        <ResponseField name="description" type="string" required>
+          Human-readable description of what the capability does.
+        </ResponseField>
+        <ResponseField name="schema" type="object" required>
+          JSON Schema (draft-07+) describing the `params` this capability accepts.
+        </ResponseField>
+        <ResponseField name="instructions" type="string">
+          Natural-language instructions for LLM-native agents (MCP style).
+        </ResponseField>
+        <ResponseField name="semantic_type" type="string">
+          W3C WoT affordance type (e.g. `ActionAffordance`).
+        </ResponseField>
+        <ResponseField name="helper_url" type="string">
+          URL to additional documentation for this capability.
+        </ResponseField>
+        <ResponseField name="template" type="string">
+          Optional prompt template.
+        </ResponseField>
+        <ResponseField name="metadata" type="object">
+          Arbitrary additional metadata.
+        </ResponseField>
+        <ResponseField name="pricing" type="object">
+          Per-capability pricing.
+          <Expandable title="PricingDescriptor properties">
+            <ResponseField name="currency" type="string">
+              Currency code (e.g. `USD`).
+            </ResponseField>
+            <ResponseField name="rate_per_minute" type="number">
+              Cost per minute of usage.
+            </ResponseField>
+            <ResponseField name="rate_per_execution" type="number">
+              Cost per execution call.
+            </ResponseField>
+            <ResponseField name="payment_address" type="string">
+              Payment destination (e.g. Stripe Connect ID or crypto wallet address).
+            </ResponseField>
+          </Expandable>
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="provider" type="string">
+      Name of the provider that owns this device.
+    </ResponseField>
+    <ResponseField name="node_id" type="string" required>
+      ID of the hardware node this device is attached to.
+    </ResponseField>
+    <ResponseField name="manufacturer" type="string">
+      Device manufacturer.
+    </ResponseField>
+    <ResponseField name="model" type="string">
+      Device model name.
+    </ResponseField>
+    <ResponseField name="serial_number" type="string">
+      Device serial number.
+    </ResponseField>
+    <ResponseField name="semantic_context" type="string[]">
+      W3C WoT `@context` alignment strings.
+    </ResponseField>
+    <ResponseField name="pricing" type="object">
+      Device-level pricing (applies when no capability-level pricing is set).
+    </ResponseField>
+    <ResponseField name="access_policy" type="object">
+      Controls which agents can access this device.
+      <Expandable title="DeviceAccessPolicy properties">
+        <ResponseField name="visibility" type="string">
+          One of `public`, `shared`, or `private`.
+          - `public` — any authenticated agent may access.
+          - `shared` — only agents or orgs in the allow-lists may access.
+          - `private` — only the device owner may access.
+        </ResponseField>
+        <ResponseField name="allowed_agents" type="string[]">
+          Agent IDs that may access a `shared` device.
+        </ResponseField>
+        <ResponseField name="allowed_orgs" type="string[]">
+          Organisation IDs that may access a `shared` device.
+        </ResponseField>
+        <ResponseField name="denied_agents" type="string[]">
+          Agent IDs explicitly denied access.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="status" type="string" required>
+      Current device status: `available`, `busy`, or `offline`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  Pagination metadata. See [pagination](/api-reference/overview#pagination).
+</ResponseField>
+
+<ResponseField name="filters" type="object">
+  Echo of the active filter parameters applied to this response.
+</ResponseField>
+
+### Error responses
+
+| Status | Description |
+|---|---|
+| `401` | Missing or invalid agent API key |
+
+<RequestExample>
+
+```bash cURL
+curl https://oahl.onrender.com/v1/capabilities \
+  -H "Authorization: Bearer <agent_api_key>" \
+  -G \
+  --data-urlencode "type=camera" \
+  --data-urlencode "capability=camera.capture" \
+  --data-urlencode "page=1" \
+  --data-urlencode "page_size=10"
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "timestamp": 1742040000000,
+  "devices": [
+    {
+      "id": "cam-01",
+      "type": "camera",
+      "name": "Front Door Camera",
+      "provider": "acme-labs",
+      "node_id": "node-abc",
+      "manufacturer": "Acme",
+      "model": "HD-5000",
+      "status": "available",
+      "capabilities": [
+        {
+          "name": "camera.capture",
+          "description": "Capture a still image from the camera.",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "resolution": { "type": "string", "enum": ["720p", "1080p"] }
+            }
+          },
+          "semantic_type": "ActionAffordance"
+        }
+      ],
+      "access_policy": {
+        "visibility": "public"
+      }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "page_size": 10,
+    "total": 1,
+    "total_pages": 1,
+    "has_next": false,
+    "has_prev": false
+  },
+  "filters": {
+    "type": "camera",
+    "capability": "camera.capture"
+  }
+}
+```
+
+```json 401
+{
+  "error": "Unauthorized"
+}
+```
+
+</ResponseExample>

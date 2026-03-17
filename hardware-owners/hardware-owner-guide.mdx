@@ -1,0 +1,378 @@
+---
+title: "Hardware owner guide"
+description: "Connect physical hardware to OAHL and make it accessible to AI agents."
+keywords: ["hardware", "node", "setup", "camera", "RTL-SDR", "android", "mock", "scan-ports"]
+---
+
+This guide is for anyone who owns or operates physical hardware and wants to expose it to AI agents through OAHL. You do not need to write any code to connect common devices such as USB webcams, RTL-SDR radios, or Android phones.
+
+## Who this guide is for
+
+You are a **hardware owner** (also called a provider) if you:
+
+- Have a machine connected to physical hardware
+- Want to make that hardware's capabilities available to local or remote agents
+- Are responsible for setting safety limits on what agents can do with your devices
+
+If you are a developer building agent software that _uses_ hardware, see the [Agent integration guide](/agents/agent-integration-guide) instead.
+
+## Prerequisites
+
+<Columns cols={2}>
+  <Card title="npm install" icon="npm">
+    Node.js 18 or later. Install the OAHL CLI globally:
+    ```bash
+    npm install -g @fredabila/oahl
+    ```
+  </Card>
+  <Card title="Docker" icon="docker">
+    Docker Engine 20 or later. Recommended when adapters require native C++ bindings. See the [Docker deployment guide](/hardware-owners/docker-deployment).
+  </Card>
+</Columns>
+
+You also need:
+
+- Physical access to the hardware and the correct local drivers already installed
+- A camera visible as `/dev/video0`, an SDR detectable by `rtl` tools, or a serial device accessible on `/dev/ttyUSB0` or `/dev/ttyACM0`
+- An OAHL Developer Portal account (created during `oahl init`)
+
+<Note>
+  OAHL wraps existing vendor drivers in a standard capability interface. It does not replace drivers.
+</Note>
+
+## Setting up your first node
+
+<Steps>
+  <Step title="Verify local hardware access">
+    Before integrating with OAHL, confirm the host machine can already see the hardware.
+
+    - **USB camera:** should appear at `/dev/video0` (Linux) or in Device Manager (Windows)
+    - **RTL-SDR:** should be detected by `rtl_test`
+    - **Serial sensor:** should be readable at `/dev/ttyUSB0`, `/dev/ttyACM0`, or a COM port on Windows
+    - **Android device:** should appear in `adb devices` output
+
+    ```bash
+    # Check for a connected USB camera
+    v4l2-ctl --list-devices
+
+    # Check for a connected RTL-SDR
+    rtl_test
+
+    # Check for connected Android devices
+    adb devices
+    ```
+  </Step>
+
+  <Step title="Install the CLI">
+    Install the OAHL toolkit globally. This provides the `oahl` command.
+
+    ```bash
+    npm install -g @fredabila/oahl
+    ```
+
+    Verify the installation:
+
+    ```bash
+    oahl --version
+    ```
+  </Step>
+
+  <Step title="(Optional) Scan connected ports">
+    Before running `init`, use `oahl scan-ports` to detect what is connected and get adapter and config suggestions.
+
+    ```bash
+    oahl scan-ports
+    ```
+
+    For machine-readable output:
+
+    ```bash
+    oahl scan-ports --json
+    ```
+
+    The command scans both USB and serial ports, identifies likely adapters, and prints config snippets you can paste directly into your `oahl-config.json`. Example output:
+
+    ```
+    ✅ Detected 2 device(s):
+
+    1. [USB] HD Webcam C920
+       id: 046d:082d
+       status: present
+       vendor: Logitech
+       suggested adapter: @oahl/adapter-usb-camera
+       suggested type: camera
+       capability hints: camera.capture
+       config snippet:
+       {"id":"detected-1","type":"camera","adapter":"usb-camera","capabilities":["camera.capture"]}
+
+    2. [SERIAL] /dev/ttyACM0
+       id: /dev/ttyACM0
+       status: present
+       suggested adapter: @oahl/adapter-custom
+       suggested type: serial-device
+       capability hints: device.read, device.write
+    ```
+  </Step>
+
+  <Step title="Run the setup wizard">
+    The `oahl init` command generates your `oahl-config.json` interactively.
+
+    ```bash
+    oahl init
+    ```
+
+    The wizard asks for:
+
+    1. **Email and PIN** — your Developer Portal credentials to link this node to your account
+    2. **Node ID** — a unique identifier for this machine (e.g. `my-laptop-01`)
+    3. **Provider name** — a human-readable label for your lab (e.g. `Accra Test Lab`)
+    4. **Device type** — USB Camera, RTL-SDR Radio, Mock/Virtual Sensor, or skip
+
+    The wizard writes `oahl-config.json` in the current directory.
+
+    <Tip>
+      After `init`, open the TUI with `oahl tui` to add more devices, manage plugins, and set access policies without editing JSON by hand.
+    </Tip>
+  </Step>
+
+  <Step title="Start the node">
+    Start the local OAHL daemon. It loads your config, initializes the adapters, and registers with the Cloud Registry.
+
+    ```bash
+    oahl start
+    ```
+
+    To use a different port:
+
+    ```bash
+    oahl start --port 8080
+    ```
+
+    You should see output similar to:
+
+    ```
+    🚀 Starting OAHL Node...
+    ✅ Node registered with Cloud Registry
+    ✅ Adapter @oahl/adapter-usb-camera initialized
+    🌐 Listening on http://localhost:3000
+    ```
+  </Step>
+
+  <Step title="Verify the node is healthy">
+    In a second terminal, confirm the node is running:
+
+    ```bash
+    curl http://localhost:3000/health
+    ```
+
+    A healthy node returns:
+
+    ```json
+    { "status": "ok" }
+    ```
+
+    To list all devices registered on the node:
+
+    ```bash
+    curl http://localhost:3000/devices
+    ```
+  </Step>
+</Steps>
+
+## Connecting different hardware types
+
+### USB camera
+
+The `@oahl/adapter-usb-camera` adapter wraps Video4Linux (V4L2) on Linux or the platform's native video API on macOS/Windows.
+
+```bash
+oahl install @oahl/adapter-usb-camera
+```
+
+Add the following device block to your `oahl-config.json`:
+
+```json
+{
+  "id": "usb-cam-1",
+  "type": "camera",
+  "adapter": "usb-camera",
+  "local_path": "/dev/video0",
+  "capabilities": [
+    "camera.capture",
+    "camera.stream"
+  ],
+  "policy": {
+    "public": false,
+    "max_session_minutes": 20
+  }
+}
+```
+
+Also add the plugin to the top-level `plugins` array:
+
+```json
+"plugins": ["@oahl/adapter-usb-camera"]
+```
+
+<Warning>
+  When running in Docker, pass the camera device into the container with `--device=/dev/video0:/dev/video0`. See the [Docker deployment guide](/hardware-owners/docker-deployment).
+</Warning>
+
+### RTL-SDR radio
+
+The `@oahl/adapter-rtl-sdr` adapter wraps the `rtl-sdr` library to expose software-defined radio capabilities.
+
+```bash
+oahl install @oahl/adapter-rtl-sdr
+```
+
+Add the device block:
+
+```json
+{
+  "id": "rtl-sdr-1",
+  "type": "sdr",
+  "adapter": "rtl-sdr-adapter",
+  "usb_index": 0,
+  "capabilities": [
+    "tune",
+    "read_samples",
+    "hardware.baseline"
+  ],
+  "policy": {
+    "public": false,
+    "max_session_minutes": 30,
+    "transmit_enabled": false,
+    "allowed_frequency_ranges": [
+      { "start_hz": 88000000, "end_hz": 108000000 }
+    ]
+  }
+}
+```
+
+<Warning>
+  Always set `transmit_enabled: false` unless your specific hardware and jurisdiction permit radio transmission.
+</Warning>
+
+### Android device (ADB)
+
+The `@oahl/adapter-android` adapter uses the Android Debug Bridge (ADB) to expose device capabilities.
+
+```bash
+oahl install @oahl/adapter-android
+```
+
+Enable **USB debugging** on the device (**Settings → Developer options → USB debugging**), then connect via USB or Wi-Fi ADB. The device ID shown by `adb devices` becomes your OAHL device ID.
+
+```json
+{
+  "id": "adb-085552528H003259-83cftS._adb-tls-connect._tcp",
+  "type": "android",
+  "adapter": "@oahl/adapter-android",
+  "capabilities": [
+    "screen.screenshot",
+    "screen.record",
+    "input.tap",
+    "input.swipe",
+    "input.text",
+    "camera.photo",
+    "system.info",
+    "system.shell"
+  ],
+  "access_policy": {
+    "visibility": "private",
+    "allowed_agents": [],
+    "allowed_orgs": [],
+    "denied_agents": []
+  },
+  "policy": {
+    "public": false,
+    "max_session_minutes": 30
+  }
+}
+```
+
+### Mock / virtual sensor
+
+The `@oahl/adapter-mock` adapter is included in the default `plugins` list. It provides a virtual device useful for testing your setup without physical hardware.
+
+```json
+{
+  "id": "mock-device-1",
+  "type": "mock",
+  "adapter": "mock-adapter",
+  "capabilities": [
+    "ping",
+    "hardware.baseline"
+  ],
+  "policy": {
+    "public": true,
+    "max_session_minutes": 30
+  }
+}
+```
+
+## Best practices
+
+- **Use dedicated machines** for nodes where possible, separate from your daily-use environment.
+- **Keep drivers updated** so adapters can access hardware reliably.
+- **Isolate devices by trust level** — keep high-risk devices on `public: false` with an explicit allow-list.
+- **Never expose unrestricted dangerous capabilities.** Set `transmit_enabled: false` on radio devices and restrict frequency ranges.
+- **Enable logging and monitor health** via the `/health` endpoint.
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="Should I use Docker or npm start?">
+    Docker is recommended when your adapters use native C++ bindings (for example `serialport` or `rtl-sdr`). These bindings require build tools that the Docker image already ships with (`build-essential`, `python3`, `libusb`, `ffmpeg`). If you use `npm start` directly, you may need to install those build tools on your host machine.
+
+    For simple setups with a USB camera or mock devices, `npm start` works fine.
+
+    See the [Docker deployment guide](/hardware-owners/docker-deployment) for step-by-step instructions.
+  </Accordion>
+
+  <Accordion title="Can I run OAHL completely offline?">
+    Yes. The Cloud Registry is optional and used only for global device discovery. To run a fully private, local-only node, set `cloud_url` to an empty string in `oahl-config.json`:
+
+    ```json
+    {
+      "node_id": "my-local-lab",
+      "cloud_url": "",
+      "devices": []
+    }
+    ```
+
+    The node will skip the cloud heartbeat. Local agents connect directly to `http://localhost:3000` over your LAN. Your devices are never broadcast to the internet.
+  </Accordion>
+
+  <Accordion title="Which hardware transport layers are supported?">
+    OAHL adapters can wrap almost any transport. The platform ships first-party transport plugins for common protocols:
+
+    - **Serial (UART/USB):** `transport-serial`
+    - **Android Debug Bridge:** `transport-adb`
+    - **Bluetooth Low Energy (BLE):** `transport-ble` (planned)
+    - **MQTT and TCP/IP:** available for networked IoT devices
+
+    For unknown hardware, scaffold a custom adapter with `oahl create-adapter <name>`.
+  </Accordion>
+
+  <Accordion title="Is it safe to let an AI agent control my hardware?">
+    OAHL is designed specifically to make this safe:
+
+    1. **Container sandboxing:** when running in Docker, the agent cannot access your host filesystem.
+    2. **Access policies:** you declare exactly which capabilities an agent may execute per device, and you can deny specific agents or organisations.
+    3. **Session exclusivity:** an agent must hold an active session to use a device. While a session is held, no other agent can send contradictory commands.
+
+    See the [Security and policies guide](/security/security-guide) for full details.
+  </Accordion>
+
+  <Accordion title="How do I add more devices after the initial setup?">
+    Open the interactive TUI at any time:
+
+    ```bash
+    oahl tui
+    ```
+
+    Select **Manage devices + access policies** to add, edit, or remove devices. Select **Import detected devices from plugins** to auto-detect devices from your installed adapters. Save and restart the node to apply changes.
+  </Accordion>
+</AccordionGroup>

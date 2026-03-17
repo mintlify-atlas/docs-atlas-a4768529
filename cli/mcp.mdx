@@ -1,0 +1,133 @@
+---
+title: "oahl mcp"
+description: "Start an MCP server that exposes OAHL hardware capabilities to AI agents."
+---
+
+The `mcp` command starts a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server over stdio. It connects to the OAHL Cloud Registry, fetches available hardware capabilities, and exposes each one as an MCP tool that any MCP-compatible AI agent can call.
+
+```bash
+oahl mcp --key <your-agent-api-key>
+```
+
+## Options
+
+<ParamField path="--url" type="string" default="https://oahl.onrender.com">
+  The OAHL Cloud Registry URL to connect to.
+
+  ```bash
+  oahl mcp --url https://my-oahl-instance.example.com --key <key>
+  ```
+</ParamField>
+
+<ParamField path="--key" type="string">
+  Agent API key for authenticating against the Cloud Registry. Required if the `OAHL_AGENT_API_KEY` environment variable is not set.
+
+  ```bash
+  oahl mcp --key sk-agent-abc123
+  ```
+</ParamField>
+
+## Authentication
+
+The command requires an agent API key. It is resolved in this order:
+
+1. `--key <key>` command-line flag
+2. `OAHL_AGENT_API_KEY` environment variable
+
+If neither is provided, the command exits:
+
+```
+❌ Error: Agent API Key is required via --key or OAHL_AGENT_API_KEY
+```
+
+Using the environment variable is recommended for automation and for configuring MCP clients:
+
+```bash
+export OAHL_AGENT_API_KEY=sk-agent-abc123
+oahl mcp
+```
+
+## How it works
+
+Once started, the MCP server:
+
+1. Connects to the Cloud Registry using `CloudClient` from `@oahl/sdk`.
+2. Handles `tools/list` requests by calling `client.getCapabilities()`, which returns all devices and their capabilities visible to your API key. Each capability on each device becomes a separate MCP tool.
+3. Handles `tools/call` requests by:
+   - Parsing the tool name to extract the capability name and device ID.
+   - Calling `client.requestSession()` to acquire an exclusive session on the device.
+   - Calling `client.execute()` with a 60-second timeout.
+   - Calling `client.stopSession()` to release the device.
+   - Returning the result as a text content block.
+
+## Tool naming convention
+
+MCP tool names are derived from capability and device identifiers:
+
+```
+<capability_name_with_dots_replaced_by_underscores>_<device_id_sanitized>
+```
+
+For example, capability `camera.capture` on device `usb-cam-1` becomes:
+
+```
+camera_capture_usb-cam-1
+```
+
+Each tool's description includes the device ID and any instructions defined on the capability:
+
+```
+[Device: usb-cam-1] Capture a still image from the camera
+```
+
+## Transport
+
+The MCP server uses **stdio transport** (`StdioServerTransport`). Configure your MCP client to launch the process and communicate over stdin/stdout.
+
+### Claude Desktop configuration example
+
+```json claude_desktop_config.json
+{
+  "mcpServers": {
+    "oahl": {
+      "command": "oahl",
+      "args": ["mcp"],
+      "env": {
+        "OAHL_AGENT_API_KEY": "sk-agent-abc123"
+      }
+    }
+  }
+}
+```
+
+## Server identity
+
+The MCP server registers itself with the following metadata:
+
+| Field | Value |
+|---|---|
+| Name | `oahl-mcp-server` |
+| Version | `0.1.0` |
+| Capabilities | `tools` |
+
+## Error handling
+
+If a tool call fails (e.g. session request rejected, execution timeout), the server returns an error content block rather than throwing:
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "Error executing capability: session request denied"
+    }
+  ],
+  "isError": true
+}
+```
+
+Server-level errors are printed to stderr and do not crash the process.
+
+<Note>
+  The MCP server runs as a long-lived foreground process. The OAHL node itself does not need to be running on the same machine — the MCP server communicates directly with the Cloud Registry.
+</Note>

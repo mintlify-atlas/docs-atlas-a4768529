@@ -1,0 +1,205 @@
+---
+title: "Semantic metadata"
+description: "How to add rich semantic metadata to capabilities and devices to improve AI agent reasoning and enable W3C WoT interoperability."
+keywords: ["semantic", "metadata", "instructions", "WoT", "ActionAffordance", "pricing", "LLM", "AI agent"]
+---
+
+Semantic metadata tells the world *what* a capability means, not just *how* to call it. By enriching your adapter's device and capability declarations, you improve AI agent reasoning and enable W3C Web of Things interoperability.
+
+---
+
+## Why add semantic metadata?
+
+<CardGroup cols={3}>
+  <Card title="Better AI reasoning" icon="brain">
+    Agents understand when and why to use a capability, not just its parameter schema.
+  </Card>
+  <Card title="WoT standardization" icon="globe">
+    Hardware declared with WoT `semantic_context` and `semantic_type` can be automatically understood by W3C WoT consumers.
+  </Card>
+  <Card title="Future discoverability" icon="search">
+    Your hardware becomes part of a searchable registry of physical tools accessible to any standards-compliant agent.
+  </Card>
+</CardGroup>
+
+---
+
+## Device metadata fields
+
+Add these fields to your adapter's `getDevices()` return value or to `oahl-config.json`:
+
+| Field | Type | Description |
+|:---|:---|:---|
+| `manufacturer` | string | The company that made the hardware (e.g. `Logitech`, `Arduino`) |
+| `model` | string | The specific model name or number (e.g. `C920`, `Uno R3`) |
+| `serial_number` | string | The unique physical ID of the device |
+| `semantic_context` | string[] | W3C WoT `@context` URLs |
+| `metadata` | object | Arbitrary key-value pairs for custom annotations |
+| `pricing` | PricingDescriptor | Usage-based pricing descriptor (see below) |
+
+### Example device declaration
+
+```json
+{
+  "id": "usb-cam-1",
+  "type": "camera",
+  "name": "Lab Camera",
+  "manufacturer": "Logitech",
+  "model": "C920",
+  "serial_number": "SN-12345-ABC",
+  "semantic_context": ["https://www.w3.org/2022/wot/td/v1.1"],
+  "isPublic": false
+}
+```
+
+---
+
+## Capability metadata fields
+
+Capabilities represent the tools an AI agent can invoke. These fields extend the base schema to improve agent decision-making:
+
+| Field | Type | Description |
+|:---|:---|:---|
+| `instructions` | string | Natural language advice for the agent on when and how to use this capability |
+| `semantic_type` | string | W3C WoT interaction type, e.g. `ActionAffordance` |
+| `helper_url` | string | URL to additional documentation or reference material |
+| `template` | string | A prompt template or invocation example for the agent |
+| `context` | string | Additional context string for the capability |
+| `metadata` | object | Arbitrary key-value pairs for custom annotations |
+| `pricing` | PricingDescriptor | Per-execution pricing descriptor |
+
+### The instructions field
+
+The `instructions` field is the most impactful metadata you can add. It gives the agent natural-language guidance that the `description` field alone cannot provide.
+
+<Tabs>
+  <Tab title="Without instructions">
+    ```typescript
+    {
+      name: 'camera.capture',
+      description: 'Captures a high-resolution photo.',
+      schema: { /* ... */ }
+    }
+    ```
+
+    The agent knows what the capability does, but not when to use it, what its side effects are, or how to recover from errors.
+  </Tab>
+  <Tab title="With instructions">
+    ```typescript
+    {
+      name: 'camera.capture',
+      description: 'Captures a high-resolution photo.',
+      instructions: 'Always ensure the privacy LED is off before calling. If the result is blurry, try increasing the exposure param.',
+      semantic_type: 'ActionAffordance',
+      schema: { /* ... */ }
+    }
+    ```
+
+    The agent now has actionable guidance it can reason about before and after execution.
+  </Tab>
+</Tabs>
+
+<Tip>
+  Write `instructions` in second person directed at the agent: what should it check before calling, what are the side effects, and what should it do if something goes wrong.
+</Tip>
+
+### The semantic_type field
+
+Set `semantic_type` to `"ActionAffordance"` to declare WoT alignment:
+
+```typescript
+async getCapabilities(deviceId: string): Promise<Capability[]> {
+  return [{
+    name: 'camera.capture',
+    description: 'Captures a high-resolution photo.',
+    instructions: 'Always ensure the privacy LED is off before calling. If the result is blurry, try increasing the exposure param.',
+    semantic_type: 'ActionAffordance',
+    schema: {
+      type: 'object',
+      properties: {
+        exposure: { type: 'number', minimum: 0, maximum: 100 }
+      }
+    }
+  }];
+}
+```
+
+---
+
+## Pricing descriptor
+
+The `PricingDescriptor` type lets you declare usage-based pricing on both devices and capabilities:
+
+```typescript
+export interface PricingDescriptor {
+  currency: string;
+  rate_per_minute?: number;
+  rate_per_execution?: number;
+  payment_address?: string; // e.g., Stripe Connect ID or crypto wallet
+}
+```
+
+### Example: per-execution pricing on a capability
+
+```typescript
+{
+  name: 'camera.capture',
+  description: 'Captures a high-resolution photo.',
+  schema: { /* ... */ },
+  pricing: {
+    currency: 'USD',
+    rate_per_execution: 0.001
+  }
+}
+```
+
+---
+
+## Auto-discovery of device metadata
+
+You do not always need to declare metadata manually. Many hardware protocols support self-description.
+
+<AccordionGroup>
+  <Accordion title="USB / Serial: query VID and PID">
+    Use libraries like `node-usb` or `serialport` to query the Vendor ID (VID) and Product ID (PID), then map these to real manufacturer and model names.
+
+    ```typescript
+    import usb from 'usb';
+
+    async getDevices(): Promise<Device[]> {
+      const list = usb.getDeviceList();
+      return list.map(d => {
+        const desc = d.deviceDescriptor;
+        return {
+          id: `usb-${desc.idVendor}-${desc.idProduct}`,
+          type: 'unknown',
+          name: 'USB Device',
+          manufacturer: `Vendor ID: ${desc.idVendor}`,
+          model: `Product ID: ${desc.idProduct}`,
+          isPublic: false
+        };
+      });
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Network: mDNS / UPnP discovery">
+    Many smart devices (Philips Hue, Sony cameras) broadcast their model and manufacturer over mDNS or UPnP. Query these protocols in `getDevices()` to populate `manufacturer` and `model` automatically.
+  </Accordion>
+
+  <Accordion title="Internal registry lookup">
+    Create a lookup table in your adapter that maps known VID/PID pairs or MAC address prefixes to human-readable manufacturer and model strings.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Checklist for hardware owners
+
+- Add `manufacturer` and `model` to your device declaration.
+- Write one or two sentences of `instructions` for your most-used capabilities.
+- Set `semantic_type: "ActionAffordance"` on capabilities where WoT alignment is relevant.
+- Add the W3C WoT `semantic_context` URL to your device if you want it to be standards-compliant.
+- Add a `pricing` descriptor if your hardware is offered as a paid service.
+
+For a full reference of every field, see the [types source](https://github.com/fredabila/oahl) in `packages/core/src/types.ts`.

@@ -1,0 +1,95 @@
+---
+title: "CLI reference"
+description: "Complete reference for the oahl command-line interface."
+sidebarTitle: "Overview"
+icon: "terminal"
+---
+
+The `oahl` CLI is the primary tool for setting up and managing Open Agent Hardware Layer nodes. It handles authentication, node configuration, adapter management, device scanning, and exposes hardware capabilities to AI agents via MCP.
+
+## Installation
+
+```bash
+npm install -g @fredabila/oahl
+```
+
+<Note>
+  Node.js 18 or later is required.
+</Note>
+
+## Usage pattern
+
+```bash
+oahl <command> [options]
+```
+
+Run `oahl --help` to list all commands, or `oahl <command> --help` for command-specific help.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| [`oahl init`](/cli/init) | Interactive wizard to create `oahl-config.json` |
+| [`oahl start`](/cli/start) | Start the local OAHL node daemon |
+| [`oahl login`](/cli/login) | Link this machine to your Developer Portal account |
+| [`oahl logout`](/cli/login#logout) | Remove saved credentials from this machine |
+| [`oahl scan-ports`](/cli/scan-ports) | Scan connected USB/serial devices and get adapter suggestions |
+| [`oahl tui`](/cli/tui) | Open terminal UI to manage config interactively |
+| [`oahl create-adapter`](/cli/create-adapter) | Scaffold a new OAHL adapter package |
+| [`oahl install`](/cli/install-adapter) | Install a hardware adapter plugin |
+| [`oahl remove`](/cli/install-adapter#remove) | Uninstall a hardware adapter plugin |
+| [`oahl mcp`](/cli/mcp) | Start an MCP server to expose OAHL capabilities to an agent |
+| [`oahl conformance`](/cli/conformance) | Run OAHL conformance checks against an adapter |
+
+## Global options
+
+| Flag | Description |
+|---|---|
+| `--version` | Print the CLI version |
+| `--help` | Show help for a command |
+
+## Typical workflow
+
+<Steps>
+  <Step title="Authenticate">
+    ```bash
+    oahl login
+    ```
+    Links the machine to your Developer Portal account. Credentials are saved to `.oahl-session.json` so subsequent commands run without prompting.
+  </Step>
+  <Step title="Scan for devices">
+    ```bash
+    oahl scan-ports
+    ```
+    Detects connected USB and serial hardware and prints adapter suggestions with ready-to-paste config snippets.
+  </Step>
+  <Step title="Initialize the node">
+    ```bash
+    oahl init
+    ```
+    Runs an interactive wizard that writes `oahl-config.json` to the current directory.
+  </Step>
+  <Step title="Start the daemon">
+    ```bash
+    oahl start
+    ```
+    Loads the config, initializes adapters, and registers the node with the Cloud Registry.
+  </Step>
+</Steps>
+
+## Related pages
+
+<CardGroup cols={2}>
+  <Card title="Hardware owner guide" icon="microchip" href="/hardware-owners/hardware-owner-guide">
+    End-to-end walkthrough of connecting hardware and publishing it to the network
+  </Card>
+  <Card title="Adapter guide" icon="plug" href="/adapters/adapter-guide">
+    How to build a custom adapter for unsupported hardware
+  </Card>
+  <Card title="MCP integration" icon="robot" href="/agents/mcp-integration">
+    Connect AI agents to OAHL hardware via the Model Context Protocol
+  </Card>
+  <Card title="Configuration reference" icon="file-code" href="/hardware-owners/configuration">
+    Full schema reference for `oahl-config.json`
+  </Card>
+</CardGroup>

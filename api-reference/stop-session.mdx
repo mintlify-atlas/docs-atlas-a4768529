@@ -1,0 +1,57 @@
+---
+title: 'Stop session'
+description: 'Release an active session and free the device with POST /v1/sessions/{session_id}/stop.'
+---
+
+## `POST /v1/sessions/{session_id}/stop`
+
+Releases the reserved session and marks the device as available for other agents.
+
+<Warning>
+  Agents **must** call this endpoint when they are finished with a device — on both success and failure paths. Sessions hold an exclusive lock on the device. If you do not stop a session, the device remains unavailable to other agents until the session expires.
+</Warning>
+
+### Path parameters
+
+<ParamField path="session_id" type="string" required>
+  Opaque session identifier returned by `POST /v1/requests`.
+</ParamField>
+
+### Response
+
+<ResponseField name="status" type="string">
+  Always `stopped` on success.
+</ResponseField>
+
+<RequestExample>
+
+```bash cURL
+curl -X POST https://oahl.onrender.com/v1/sessions/sess-3f7a2c1d-e8b5-4f12-a903-7d1c2e3f4a5b/stop \
+  -H "Authorization: Bearer <agent_api_key>"
+```
+
+</RequestExample>
+
+<ResponseExample>
+
+```json 200
+{
+  "status": "stopped"
+}
+```
+
+</ResponseExample>
+
+## Recommended agent pattern
+
+Always stop the session in a `finally` block (or equivalent) to ensure the device is freed even if execution fails:
+
+```javascript
+const { session_id } = await createSession({ capability: 'camera.capture' });
+try {
+  const result = await execute(session_id, { capability: 'camera.capture', params: {} });
+  // handle result
+} finally {
+  await stopSession(session_id);
+}
+```

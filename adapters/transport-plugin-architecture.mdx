@@ -1,0 +1,286 @@
+---
+title: "Transport plugin architecture"
+description: "How to isolate connection mechanics from capability logic using OAHL's TransportProvider interface."
+keywords: ["transport", "TransportProvider", "ADB", "serial", "MQTT", "BLE", "USB", "plugin"]
+---
+
+Adapters should not reimplement connection logic for every hardware protocol. Instead, OAHL provides a `TransportProvider` abstraction that isolates connection mechanics (ADB, serial, MQTT, BLE, TCP) from capability behaviour. The adapter focuses on what the hardware does; the transport plugin handles how to reach it.
+
+## Why transport plugins exist
+
+Without transport separation, every adapter that controls an Android device would contain its own ADB connection management, retry logic, and error handling. With transport plugins:
+
+- Connection logic is reusable across multiple adapters.
+- The capability API stays stable even when the physical transport changes (e.g. switching from USB ADB to Wi-Fi ADB).
+- Transport plugins can be tested and upgraded independently of the adapter.
+
+## The TransportProvider interface
+
+Transport plugins implement `TransportProvider` from `@oahl/core` (`packages/core/src/transport.ts`):
+
+```typescript
+export interface TransportProvider {
+  id: string;
+  protocols: TransportProtocol[];
+
+  supports(profile: TransportAttachmentProfile): boolean;
+  connect(request: TransportConnectRequest): Promise<TransportConnection>;
+  disconnect(connection: TransportConnection): Promise<void>;
+  health(connection: TransportConnection): Promise<TransportHealth>;
+  execute<TPayload = any, TData = any>(
+    connection: TransportConnection,
+    command: TransportCommand<TPayload>
+  ): Promise<TransportResult<TData>>;
+}
+```
+
+### Supporting types
+
+```typescript
+export interface TransportAttachmentProfile {
+  protocol: TransportProtocol;   // e.g. 'usb', 'serial', 'ble', 'mqtts'
+  mode: TransportMode;           // 'local' | 'lan' | 'wan' | 'relay'
+  endpoint?: string;
+  auth?: {
+    type: TransportAuthType;     // 'none' | 'token' | 'basic' | 'mtls' | 'pairing' | 'custom'
+    details?: any;
+  };
+  security?: {
+    tls?: boolean;
+    certificate_pinning?: boolean;
+    encrypted_transport?: boolean;
+  };
+  metadata?: Record<string, any>;
+}
+
+export interface TransportConnection {
+  connectionId: string;
+  deviceId: string;
+  protocol: TransportProtocol;
+  connectedAt: number;
+  metadata?: Record<string, any>;
+}
+
+export interface TransportCommand<TPayload = any> {
+  operationId: string;
+  capability: string;
+  payload: TPayload;
+  timeoutMs?: number;
+}
+
+export interface TransportResult<TData = any> {
+  operationId: string;
+  success: boolean;
+  data?: TData;
+  error?: {
+    code: string;
+    message: string;
+    retryable?: boolean;
+    details?: any;
+  };
+  durationMs?: number;
+  raw?: any;
+}
+```
+
+### BaseTransportProvider
+
+`BaseTransportProvider` is an optional abstract class that provides a built-in `withRetry` helper:
+
+```typescript
+export abstract class BaseTransportProvider implements TransportProvider {
+  // ... abstract method declarations ...
+
+  protected async withRetry<T>(
+    action: () => Promise<T>,
+    options?: { attempts?: number; delayMs?: number }
+  ): Promise<T> {
+    const attempts = Math.max(options?.attempts ?? 1, 1);
+    const delayMs = Math.max(options?.delayMs ?? 0, 0);
+    let lastError: any;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await action();
+      } catch (error: any) {
+        lastError = error;
+        if (attempt < attempts && delayMs > 0) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+
+    throw lastError;
+  }
+}
+```
+
+Extend `BaseTransportProvider` when you want automatic retry support without implementing it yourself.
+
+## Recommended package layout
+
+For adapters that use transport plugins, organise your source like this:
+
+```text
+adapters/
+  adapter-android/
+    src/
+      index.ts                     # Adapter (capability logic)
+      transports/
+        adbUsbTransport.ts         # USB ADB provider
+        adbWifiTransport.ts        # Wi-Fi ADB provider
+      profiles/
+        androidProfiles.ts         # Attachment profile declarations
+      types.ts
+```
+
+This separation means you can swap `adbUsbTransport` for `adbWifiTransport` without touching the capability logic in `index.ts`.
+
+## Adapter + transport composition pattern
+
+The adapter receives a list of `TransportProvider` instances at construction time. In `execute()`, it selects the right transport by calling `supports(profile)`:
+
+```typescript
+import {
+  Adapter,
+  Device,
+  Capability,
+  TransportProvider,
+  TransportAttachmentProfile
+} from '@oahl/core';
+
+export default class AndroidAdapter implements Adapter {
+  id = 'android-adapter';
+
+  constructor(private transports: TransportProvider[]) {}
+
+  async execute(deviceId: string, capabilityName: string, args: any): Promise<any> {
+    const profile: TransportAttachmentProfile = {
+      protocol: 'usb',
+      mode: 'local',
+      metadata: { channel: 'adb' }
+    };
+
+    const transport = this.transports.find(t => t.supports(profile));
+    if (!transport) {
+      throw new Error('No transport provider supports this attachment profile');
+    }
+
+    const connection = await transport.connect({ deviceId, profile, timeoutMs: 5000 });
+    try {
+      return await transport.execute(connection, {
+        operationId: `op-${Date.now()}`,
+        capability: capabilityName,
+        payload: args,
+        timeoutMs: 10000
+      });
+    } finally {
+      await transport.disconnect(connection);
+    }
+  }
+
+  async initialize(): Promise<void> {}
+  async healthCheck() { return { status: 'ok' as const }; }
+  async getDevices(): Promise<Device[]> { return []; }
+  async getCapabilities(_deviceId: string): Promise<Capability[]> { return []; }
+}
+```
+
+## Protocol selection strategy
+
+When selecting between multiple transport providers:
+
+- **Prefer deterministic profile selection** — choose the provider based on explicit device metadata, policy configuration, or environment variables rather than guessing.
+- **Do not silently fall back to an insecure transport** if the secure one fails. Log the failure and surface it as an error.
+- **Only fall back to a secondary protocol** if it is explicitly configured as a fallback in the attachment profile or device config.
+
+## Protocol families
+
+<Tabs>
+  <Tab title="Serial (UART/USB)">
+    Serial transport connects to physical `/dev/ttyUSB0`, `/dev/ttyACM0`, or COM port devices. Use this for Arduino boards, industrial sensors, embedded microcontrollers, and any device that speaks UART.
+
+    ```typescript
+    const profile: TransportAttachmentProfile = {
+      protocol: 'serial',
+      mode: 'local',
+      endpoint: '/dev/ttyUSB0',
+      auth: { type: 'none' }
+    };
+    ```
+
+    Typical use: `adapter-arduino`, custom serial-attached sensors.
+  </Tab>
+  <Tab title="ADB (Android Debug Bridge)">
+    ADB transport bridges USB-connected or Wi-Fi–paired Android devices. The adapter bootstraps over USB ADB for initial setup, then switches to `tcp` or ADB-over-Wi-Fi for cable-free operation.
+
+    ```typescript
+    // USB bootstrap
+    const usbProfile: TransportAttachmentProfile = {
+      protocol: 'usb',
+      mode: 'local',
+      metadata: { channel: 'adb' }
+    };
+
+    // Wi-Fi follow-up
+    const wifiProfile: TransportAttachmentProfile = {
+      protocol: 'tcp',
+      mode: 'lan',
+      endpoint: '192.168.1.42:5555'
+    };
+    ```
+
+    Used by `@oahl/adapter-android`.
+  </Tab>
+  <Tab title="MQTT/TCP">
+    For networked IoT devices and robotic systems on a LAN. Use `mqtts` with mutual TLS for production deployments.
+
+    ```typescript
+    const profile: TransportAttachmentProfile = {
+      protocol: 'mqtts',
+      mode: 'lan',
+      endpoint: 'mqtts://robot-gateway.local:8883',
+      auth: { type: 'mtls' },
+      security: { tls: true, certificate_pinning: true }
+    };
+    ```
+
+    Typical use: robotic arms, industrial LAN equipment, smart-home bridges.
+  </Tab>
+  <Tab title="BLE (planned)">
+    Bluetooth Low Energy transport (`transport-ble`) is on the OAHL roadmap. When available, it will follow the same `TransportProvider` contract.
+
+    ```typescript
+    // Future shape — not yet released
+    const profile: TransportAttachmentProfile = {
+      protocol: 'ble',
+      mode: 'local',
+      metadata: { service_uuid: '0000180f-0000-1000-8000-00805f9b34fb' }
+    };
+    ```
+  </Tab>
+</Tabs>
+
+## Conformance requirements
+
+A transport plugin is considered conformant if it:
+
+- Implements all five methods of `TransportProvider` fully
+- Uses structured errors in `TransportResult.error` (never throws untyped exceptions)
+- Supports health checks and bounded retry behaviour
+- Does not leak credentials in logs or returned payloads
+
+```bash
+oahl conformance @oahl/your-transport-plugin
+```
+
+## Practical examples
+
+| Hardware | Transport strategy |
+|----------|--------------------|
+| Android phone | `adb_usb` for bootstrap, `adb_wifi` for cable-free operation |
+| Robotic arm on LAN | `mqtts` with mTLS |
+| Industrial sensor | `serial` on local node |
+| Remote IoT device | `https` or `wss` over WAN |
+
+For more detail on how profiles are declared and attached to devices, see the [transport attachment profiles guide](/adapters/transport-attachment-profiles).

@@ -1,0 +1,154 @@
+{
+  "projectType": "framework",
+  "projectName": "Open Agent Hardware Layer (OAHL)",
+  "projectDescription": "An open-source framework that exposes physical hardware capabilities to AI agents through standardized APIs, adapters, and a cloud relay registry.",
+  "theme": "aspen",
+  "primaryColor": "#0ea5e9",
+  "lightColor": "#e0f2fe",
+  "darkColor": "#0c4a6e",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Hardware Owners",
+            "pages": [
+              "hardware-owners/hardware-owner-guide",
+              "hardware-owners/configuration",
+              "hardware-owners/docker-deployment"
+            ]
+          },
+          {
+            "group": "Adapters",
+            "pages": [
+              "adapters/overview",
+              "adapters/adapter-guide",
+              "adapters/transport-plugin-architecture",
+              "adapters/transport-attachment-profiles"
+            ]
+          },
+          {
+            "group": "Agent Integration",
+            "pages": [
+              "agents/agent-integration-guide",
+              "agents/sdk-javascript",
+              "agents/sdk-python",
+              "agents/mcp-integration"
+            ]
+          },
+          {
+            "group": "Security & Policies",
+            "pages": [
+              "security/security-guide",
+              "security/access-policies"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/oahl-protocol-v1",
+              "advanced/wot-alignment",
+              "advanced/semantic-metadata",
+              "advanced/standardization-roadmap"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/overview",
+              "api-reference/authentication"
+            ]
+          },
+          {
+            "group": "Agent Endpoints",
+            "pages": [
+              "api-reference/capabilities",
+              "api-reference/sessions",
+              "api-reference/execute",
+              "api-reference/execute-batch",
+              "api-reference/stop-session"
+            ]
+          },
+          {
+            "group": "Provider Endpoints",
+            "pages": [
+              "api-reference/register-node",
+              "api-reference/poll-commands",
+              "api-reference/submit-result"
+            ]
+          },
+          {
+            "group": "WebSocket",
+            "pages": [
+              "api-reference/websocket"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/init",
+              "cli/start",
+              "cli/login",
+              "cli/scan-ports",
+              "cli/tui",
+              "cli/create-adapter",
+              "cli/install-adapter",
+              "cli/mcp",
+              "cli/conformance"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Standardized hardware capability API (camera.capture, radio.scan, etc.)",
+    "Cloud Registry for global hardware discovery and relay",
+    "Plugin-based adapter system for any hardware type",
+    "Session-based exclusive hardware access with policy enforcement",
+    "MCP (Model Context Protocol) integration for LLM-native agents",
+    "JavaScript/TypeScript and Python SDKs",
+    "Docker-based sandboxed execution",
+    "Access policies with visibility controls (public, shared, private)",
+    "CLI with interactive TUI and setup wizard",
+    "W3C Web of Things (WoT) semantic alignment"
+  ],
+  "publicApiSurface": [
+    "GET /v1/capabilities — list available hardware devices",
+    "POST /v1/requests — reserve a hardware session",
+    "POST /v1/sessions/{session_id}/execute — execute a capability",
+    "POST /v1/sessions/{session_id}/execute-batch — batch execute capabilities",
+    "POST /v1/sessions/{session_id}/stop — release a session",
+    "POST /v1/provider/nodes/register — register/heartbeat a node",
+    "GET /v1/provider/nodes/{id}/poll — long-poll for commands",
+    "POST /v1/provider/nodes/results — submit execution result",
+    "OahlClient (JS SDK) — local node client",
+    "CloudClient (JS SDK) — cloud relay client",
+    "oahl init — interactive setup wizard",
+    "oahl start — start local node daemon",
+    "oahl scan-ports — detect connected USB/serial devices",
+    "oahl create-adapter — scaffold a new adapter",
+    "oahl mcp — start MCP server for agent integration",
+    "Adapter interface: initialize(), getDevices(), getCapabilities(), execute()"
+  ]
+}
